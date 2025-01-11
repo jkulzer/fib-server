@@ -14,3 +14,11 @@ type SessionToken struct {
 	Token  uuid.UUID
 	Expiry time.Time
 }
+
+type CreateLobby struct {
+	Token uuid.UUID
+}
+
+type LobbyCreationResponse struct {
+	LobbyToken string
+}
