@@ -15,8 +15,16 @@ type UserAccount struct {
 
 type Session struct {
 	gorm.Model
-	Token         uuid.UUID
+	Token         uuid.UUID `gorm:"unique"`
 	UserAccountID uint
 	UserAccount   UserAccount
 	Expiry        time.Time
+}
+
+type Lobby struct {
+	gorm.Model
+	Token     string `gorm:"unique"`
+	CreatorID uint
+	Creator   UserAccount `gorm:"foreignKey:CreatorID"`
+	// Members []UserAccount
 }

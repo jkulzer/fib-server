@@ -1,0 +1,4 @@
+.direnv
+sqlite.db
+*.geojson
+*.osm.pbf

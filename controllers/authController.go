@@ -7,10 +7,9 @@ import (
 
 	"github.com/jkulzer/fib-server/models"
 
-	"golang.org/x/crypto/bcrypt"
-
 	"errors"
 	"fmt"
+	"golang.org/x/crypto/bcrypt"
 	"net/http"
 	"time"
 )
@@ -72,36 +71,12 @@ func CheckPasswordHash(password, hash string) bool {
 	return err == nil
 }
 
-func CreateSession(env *db.Env, userAccount models.UserAccount, w http.ResponseWriter) {
-	sessionToken, expiryDuration := NewSession(env, userAccount)
-	// creates a session cookie
-	cookie := http.Cookie{
-		Name:  "Session",
-		Value: sessionToken.String(),
-		Path:  "/",
-		// sets the expiry time also used in the session
-		MaxAge:   int(expiryDuration.Seconds()),
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteLaxMode,
-	}
-	fmt.Println("New Session for \"" + userAccount.Name + "\"")
-
-	http.SetCookie(w, &cookie)
-
-}
-
-func RefreshSession(env *db.Env, w http.ResponseWriter, r *http.Request) {
-	user := RemoveSession(env, w, r)
-	CreateSession(env, user, w)
-}
-
-func RemoveSession(env *db.Env, w http.ResponseWriter, r *http.Request) models.UserAccount {
-	_, session := GetLoginFromSession(env, r)
+func RemoveSession(db *gorm.DB, w http.ResponseWriter, r *http.Request) models.UserAccount {
+	_, session := GetLoginFromSession(db, r)
 
 	user := session.UserAccount
 
-	env.DB.Delete(&session)
+	db.Delete(&session)
 
 	// deletes the cookie
 	cookie := http.Cookie{

@@ -22,3 +22,7 @@ type CreateLobby struct {
 type LobbyCreationResponse struct {
 	LobbyToken string
 }
+
+type LobbyJoinRequest struct {
+	LobbyToken string
+}
