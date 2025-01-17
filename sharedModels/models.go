@@ -15,10 +15,6 @@ type SessionToken struct {
 	Expiry time.Time
 }
 
-type CreateLobby struct {
-	Token uuid.UUID
-}
-
 type LobbyCreationResponse struct {
 	LobbyToken string
 }
@@ -26,3 +22,14 @@ type LobbyCreationResponse struct {
 type LobbyJoinRequest struct {
 	LobbyToken string
 }
+
+type UserRole int
+
+const (
+	Hider UserRole = iota
+	Seeker
+)
+
+type RoleAvailability []UserRole
+
+var LobbyCodeRegex = "^[A-Z0-9]{6}$"

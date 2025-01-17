@@ -10,7 +10,7 @@ import (
 
 	"github.com/jkulzer/fib-server/helpers"
 
-	"github.com/golang/geo/s2"
+	// "github.com/golang/geo/s2"
 	"github.com/paulmach/orb"
 	"github.com/paulmach/orb/geojson"
 
@@ -55,7 +55,7 @@ func ProcessData() {
 	}
 	log.Info().Msg("finished processing of OSM data")
 
-	testPoint := orb.Point{52.507546, 13.525537}
+	// testPoint := orb.Point{52.507546, 13.525537}
 
 	for _, relation := range bezirke {
 
@@ -63,34 +63,54 @@ func ProcessData() {
 		var orbPoints []orb.Point
 
 		fmt.Println(relation.Tags.Find("name"))
+		var borderWays []osm.Way
 		for _, member := range relation.Members {
 			if member.Type == osm.TypeWay {
 				wayID, err := member.ElementID().WayID()
 				if err != nil {
 					log.Err(err)
-					continue
 				} else {
-					for _, wayNode := range ways[wayID].Nodes {
-
-						node := nodes[wayNode.ID]
-						// geoPoint := helpers.OsmNodeToGeoPoint(*node)
-						orbPoint := helpers.NodeToPoint(*node)
-
-						prevNodeIdentical := false
-						if len(orbPoints) > 0 {
-							if orbPoints[len(orbPoints)-1] == orbPoint {
-
-							}
-						}
-						if prevNodeIdentical == false {
-
-							orbPoints = append(orbPoints, orbPoint)
-						} else {
-							fmt.Println("identical nodes")
-						}
-					}
+					way := ways[wayID]
+					borderWays = append(borderWays, *way)
 				}
 			}
+		}
+
+		for wayIndex, way := range borderWays {
+
+			// lastWayWayNode := way.Nodes[len(way.Nodes)-1]
+			// lastWayNode := nodes[lastWayWayNode.ID]
+			//
+			// wayNodesLastIndex := len(way.Nodes) - 1
+
+			for nodeIndex, wayNode := range way.Nodes {
+
+				node := nodes[wayNode.ID]
+				// geoPoint := helpers.OsmNodeToGeoPoint(*node)
+				orbPoint := helpers.NodeToPoint(*node)
+				if wayIndex > 1 && nodeIndex == 0 {
+
+					if orbPoints[len(orbPoints)-1] == orbPoint {
+
+						log.Info().Msg("point overlap of node " + fmt.Sprint(wayNode.ID))
+
+					}
+					// else if orbPoints[len(orbPoints)-1] == helpers.NodeToPoint(*lastWayNode) {
+					//
+					// 	log.Info().Msg("REVERSE WAY " + fmt.Sprint(way.ID))
+					//
+					// 	mirroredWayNode := way.Nodes[wayNodesLastIndex-nodeIndex]
+					// 	mirroredPoint := helpers.NodeToPoint(*nodes[mirroredWayNode.ID])
+					//
+					// 	orbPoints = append(orbPoints, mirroredPoint)
+					//
+					// }
+				} else {
+					orbPoints = append(orbPoints, orbPoint)
+				}
+
+			}
+
 		}
 
 		feature := geojson.NewFeature(orb.LineString(orbPoints))
@@ -106,13 +126,13 @@ func ProcessData() {
 
 		_ = os.WriteFile("./bezirk.geojson", []byte(string(geoJSON)), 0644)
 
-		bezirkLoop := s2.LoopFromPoints(geoPoints)
+		// bezirkLoop := s2.LoopFromPoints(geoPoints)
 
-		var loopList []*s2.Loop
-		loopList = append(loopList, bezirkLoop)
-		bezirkPolygon := s2.PolygonFromLoops(loopList)
+		// var loopList []*s2.Loop
+		// loopList = append(loopList, bezirkLoop)
+		// bezirkPolygon := s2.PolygonFromLoops(loopList)
 
 		// fmt.Println(bezirkPolygon.ContainsPoint(helpers.OrbPointToGeoPoint(testPoint)))
-		fmt.Println(bezirkPolygon.ContainsPoint(helpers.OrbPointToGeoPoint(testPoint)))
+		// fmt.Println(bezirkPolygon.ContainsPoint(helpers.OrbPointToGeoPoint(testPoint)))
 	}
 }

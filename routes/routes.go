@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/jkulzer/fib-server/controllers"
@@ -104,59 +105,84 @@ func Router(r chi.Router, db *gorm.DB) {
 		)
 	})
 	r.Route("/lobby", func(r chi.Router) {
+		r.Use(AuthMiddleware(db))
+		r.Get("/{index}/roles", func(w http.ResponseWriter, r *http.Request) {
+			lobbyToken := chi.URLParam(r, "index")
+			// regex for verifying the lobby token
+			lobbyTokenRegex := regexp.MustCompile("^[A-Z0-9]{6}$")
+			// if the input is valid
+			if lobbyTokenRegex.MatchString(lobbyToken) {
+				// finds lobby in DB
+				var lobby models.Lobby
+				result := db.Where("token = ?", lobbyToken).First(&lobby)
+				// if lobby can't be found
+				if result.Error != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					w.Write(nil)
+				} else {
+					var roleAvailability []sharedModels.UserRole
+					// both hider and seeker are available
+					if lobby.SeekerID == 0 && lobby.HiderID == 0 {
+						roleAvailability = []sharedModels.UserRole{sharedModels.Seeker, sharedModels.Hider}
+						// only seeker is available
+					} else if lobby.SeekerID == 0 && lobby.HiderID != 0 {
+						roleAvailability = []sharedModels.UserRole{sharedModels.Seeker}
+						// only hider is available
+					} else if lobby.SeekerID != 0 && lobby.HiderID == 0 {
+						roleAvailability = []sharedModels.UserRole{sharedModels.Hider}
+						// nothing available
+					} else {
+						roleAvailability = []sharedModels.UserRole{}
+					}
+
+					marshalledJson, err := json.Marshal(roleAvailability)
+					if err != nil {
+						log.Err(err).Msg("failed to marshal roles get")
+					}
+					w.WriteHeader(http.StatusOK)
+					w.Write(marshalledJson)
+				}
+				// if the input is not valid
+			} else {
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write(nil)
+			}
+		})
 		r.Post("/create",
 			func(w http.ResponseWriter, r *http.Request) {
-				body, err := helpers.ReadHttpResponse(r.Body)
-				if err != nil {
-					log.Warn().Msg("failed to read http response")
-				}
+				userID, isUint := r.Context().Value(models.UserIDKey).(uint)
 
-				var lobbyCreationInfo sharedModels.CreateLobby
-				err = json.Unmarshal(body, &lobbyCreationInfo)
-				if err != nil {
-					log.Warn().Msg("failed to parse json of lobby creating request")
-				} else {
-					creatorSession := &models.Session{Token: lobbyCreationInfo.Token}
-					result := db.First(&creatorSession)
+				if isUint {
+					charsetString := "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789"
 
-					// if the user creation fails,
+					lobbyToken := helpers.RandomString(6, charsetString)
+
+					var lobby models.Lobby
+
+					// deletes all other lobbies owned by the creator of the current lobby
+					// this ensures that no zombie lobbies exist in the database
+					db.Where("creator_id = ?", userID).Delete(&models.Lobby{})
+					lobby.Token = lobbyToken
+
+					result := db.Create(&lobby)
 					if result.Error != nil {
-						log.Info().Msg("failed to find token, unauthenticated")
-						w.WriteHeader(http.StatusBadRequest)
-						w.Write(nil)
-					} else {
-
-						charsetString := "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789"
-
-						lobbyToken := helpers.RandomString(6, charsetString)
-
-						var lobby models.Lobby
-
-						// deletes all other lobbies owned by the creator of the current lobby
-						// this ensures that no zombie lobbies exist in the database
-						db.Where("creator_id = ?", creatorSession.UserAccount.ID).Delete(&models.Lobby{})
-						// := models.Lobby{
-						// 	Creator: creatorSession.UserAccount,
-						// }
-						lobby.Token = lobbyToken
-
-						result := db.Create(&lobby)
-						if result.Error != nil {
-							log.Err(err).Msg("failed to create lobby in database")
-						}
-
-						lobbyCreationResponse := sharedModels.LobbyCreationResponse{
-							LobbyToken: lobbyToken,
-						}
-
-						fmt.Println("Created lobby with token " + lobbyToken)
-						marshalledJson, err := json.Marshal(lobbyCreationResponse)
-						if err != nil {
-							log.Err(err).Msg("failed to marshal lobby creation response")
-						}
-						w.WriteHeader(http.StatusCreated)
-						w.Write(marshalledJson)
+						log.Err(result.Error).Msg("failed to create lobby in database")
 					}
+
+					lobbyCreationResponse := sharedModels.LobbyCreationResponse{
+						LobbyToken: lobbyToken,
+					}
+
+					fmt.Println("Created lobby with token " + lobbyToken)
+					marshalledJson, err := json.Marshal(lobbyCreationResponse)
+					if err != nil {
+						log.Err(err).Msg("failed to marshal lobby creation response")
+					}
+					w.WriteHeader(http.StatusCreated)
+					w.Write(marshalledJson)
+				} else {
+					w.WriteHeader(http.StatusBadRequest)
+					w.Write(nil)
 				}
 			},
 		)
@@ -182,93 +208,7 @@ func Router(r chi.Router, db *gorm.DB) {
 						w.WriteHeader(http.StatusNotFound)
 						w.Write(nil)
 					} else {
-						w.WriteHeader(http.StatusAccepted)
-						w.Write(nil)
-					}
-				}
-			},
-		)
-	})
-	r.Route("/location", func(r chi.Router) {
-		r.Post("/create",
-			func(w http.ResponseWriter, r *http.Request) {
-				body, err := helpers.ReadHttpResponse(r.Body)
-				if err != nil {
-					log.Warn().Msg("failed to read http response")
-				}
-
-				var lobbyCreationInfo sharedModels.CreateLobby
-				err = json.Unmarshal(body, &lobbyCreationInfo)
-				if err != nil {
-					log.Warn().Msg("failed to parse json of lobby creating request")
-				} else {
-					creatorSession := &models.Session{Token: lobbyCreationInfo.Token}
-					result := db.First(&creatorSession)
-
-					// if the user creation fails,
-					if result.Error != nil {
-						log.Info().Msg("failed to find token, unauthenticated")
-						w.WriteHeader(http.StatusBadRequest)
-						w.Write(nil)
-					} else {
-
-						charsetString := "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789"
-
-						lobbyToken := helpers.RandomString(6, charsetString)
-
-						var lobby models.Lobby
-
-						// deletes all other lobbies owned by the creator of the current lobby
-						// this ensures that no zombie lobbies exist in the database
-						db.Where("creator_id = ?", creatorSession.UserAccount.ID).Delete(&models.Lobby{})
-						// := models.Lobby{
-						// 	Creator: creatorSession.UserAccount,
-						// }
-						lobby.Token = lobbyToken
-
-						result := db.Create(&lobby)
-						if result.Error != nil {
-							log.Err(err).Msg("failed to create lobby in database")
-						}
-
-						lobbyCreationResponse := sharedModels.LobbyCreationResponse{
-							LobbyToken: lobbyToken,
-						}
-
-						fmt.Println("Created lobby with token " + lobbyToken)
-						marshalledJson, err := json.Marshal(lobbyCreationResponse)
-						if err != nil {
-							log.Err(err).Msg("failed to marshal lobby creation response")
-						}
-						w.WriteHeader(http.StatusCreated)
-						w.Write(marshalledJson)
-					}
-				}
-			},
-		)
-		r.Post("/join",
-			func(w http.ResponseWriter, r *http.Request) {
-				body, err := helpers.ReadHttpResponse(r.Body)
-				if err != nil {
-					log.Err(err).Msg("failed to read http response")
-				}
-
-				var lobbyJoinRequest sharedModels.LobbyJoinRequest
-				err = json.Unmarshal(body, &lobbyJoinRequest)
-				if err != nil {
-					log.Warn().Msg("failed to parse json of lobby join request")
-				} else {
-
-					lobby := models.Lobby{
-						Token: lobbyJoinRequest.LobbyToken,
-					}
-
-					result := db.First(&lobby)
-					if result.Error != nil {
-						w.WriteHeader(http.StatusNotFound)
-						w.Write(nil)
-					} else {
-						w.WriteHeader(http.StatusAccepted)
+						w.WriteHeader(http.StatusOK)
 						w.Write(nil)
 					}
 				}

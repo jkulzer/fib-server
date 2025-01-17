@@ -26,5 +26,12 @@ type Lobby struct {
 	Token     string `gorm:"unique"`
 	CreatorID uint
 	Creator   UserAccount `gorm:"foreignKey:CreatorID"`
-	// Members []UserAccount
+	HiderID   uint
+	Hider     UserAccount `gorm:"foreignKey:CreatorID"`
+	SeekerID  uint
+	Seeker    UserAccount `gorm:"foreignKey:SeekerID"`
 }
+
+type ContextKey uint
+
+const UserIDKey ContextKey = iota
