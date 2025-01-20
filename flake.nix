@@ -18,6 +18,7 @@
 						gopls
 						gnumake
 						sqlite
+						go-swagger
 						sqlitebrowser
 					]; 
 				};
