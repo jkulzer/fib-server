@@ -122,7 +122,7 @@ func DeleteSessionByUuid(uuid uuid.UUID, db *gorm.DB, r *http.Request) error {
 	isLoggedIn, session := GetLoginFromSession(db, r)
 	if isLoggedIn {
 		var toBeDeletedSession models.Session
-		db.Model(models.Session{Token: uuid, UserAccountID: session.UserAccount.ID}).First(&toBeDeletedSession)
+		db.Model(models.Session{Token: uuid, UserAccountID: session.UserAccountID}).First(&toBeDeletedSession)
 		fmt.Println("Will delete session " + toBeDeletedSession.Token.String())
 		db.Delete(&toBeDeletedSession)
 		return nil

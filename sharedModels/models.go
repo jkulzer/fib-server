@@ -2,6 +2,7 @@ package sharedModels
 
 import (
 	"github.com/google/uuid"
+	"github.com/paulmach/orb"
 	"time"
 )
 
@@ -26,7 +27,8 @@ type LobbyJoinRequest struct {
 type UserRole int
 
 const (
-	Hider UserRole = iota
+	NoRole UserRole = iota
+	Hider
 	Seeker
 )
 
@@ -55,4 +57,22 @@ type PhaseResponse struct {
 
 type ReadinessResponse struct {
 	Ready bool
+}
+
+type SetReadinessRequest struct {
+	Ready bool
+}
+
+type TimeResponse struct {
+	Time time.Time
+}
+
+// var RunDuration time.Duration = 45 * time.Minute
+
+var RunDuration time.Duration = 1 * time.Minute
+
+var HidingZoneRadius float64 = 500.0
+
+type LocationRequest struct {
+	Location orb.Point
 }

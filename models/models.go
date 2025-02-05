@@ -2,7 +2,9 @@ package models
 
 import (
 	"github.com/google/uuid"
+
 	"gorm.io/gorm"
+
 	"time"
 
 	"github.com/jkulzer/fib-server/sharedModels"
@@ -25,16 +27,24 @@ type Session struct {
 
 type Lobby struct {
 	gorm.Model
-	Token       string `gorm:"unique"`
-	CreatorID   uint
-	Creator     UserAccount `gorm:"foreignKey:CreatorID"`
-	HiderID     uint
-	Hider       UserAccount `gorm:"foreignKey:CreatorID"`
-	SeekerID    uint
-	Seeker      UserAccount `gorm:"foreignKey:SeekerID"`
-	Phase       sharedModels.GamePhase
-	HiderReady  bool
-	SeekerReady bool
+	Token         string `gorm:"unique"`
+	CreatorID     uint
+	Creator       UserAccount `gorm:"foreignKey:CreatorID"`
+	HiderID       uint
+	Hider         UserAccount `gorm:"foreignKey:CreatorID"`
+	SeekerID      uint
+	Seeker        UserAccount `gorm:"foreignKey:SeekerID"`
+	Phase         sharedModels.GamePhase
+	HiderReady    bool
+	SeekerReady   bool
+	RunStartTime  time.Time
+	ZoneCenterLat float64
+	ZoneCenterLon float64
+	HiderLat      float64
+	HiderLon      float64
+	SeekerLat     float64
+	SeekerLon     float64
+	ExcludedArea  string
 }
 
 type ContextKey uint
