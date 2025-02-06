@@ -19,6 +19,8 @@ import (
 	"github.com/paulmach/orb"
 	orbGeo "github.com/paulmach/orb/geo"
 	"github.com/paulmach/orb/geojson"
+	"github.com/paulmach/orb/planar"
+	"github.com/paulmach/orb/simplify"
 
 	chi "github.com/go-chi/chi/v5"
 
@@ -40,7 +42,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 
 			hashedPassword, err := controllers.HashPassword(loginInfo.Password)
 			if err != nil {
-				fmt.Println("Failed to hash password")
+				log.Warn().Msg("Failed to hash password")
 			}
 
 			userName := models.UserAccount{
@@ -52,7 +54,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 
 			// if the user creation fails,
 			if result.Error != nil {
-				fmt.Println("Duplicate Username")
+				log.Warn().Msg("Duplicate Username")
 				w.WriteHeader(http.StatusBadRequest)
 				w.Write(nil)
 			} else {
@@ -125,6 +127,36 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 					log.Info().Msg("user ID " + fmt.Sprint(userID))
 					lobby.CreatorID = userID
 					newFC := geojson.NewFeatureCollection()
+
+					var boundaryLineStrings []orb.LineString
+					log.Debug().Msg("length of city boundary member list: " + fmt.Sprint(len(processedData.CityBoundary.Members)))
+					for _, member := range processedData.CityBoundary.Members {
+						if member.Type == "way" {
+							wayID, err := member.ElementID().WayID()
+							if err != nil {
+								log.Err(err).Msg("")
+								continue
+							}
+							way := processedData.Ways[wayID]
+							lineString := geo.LineStringFromWay(way, processedData.Nodes)
+							boundaryLineStrings = append(boundaryLineStrings, lineString)
+						}
+					}
+					log.Debug().Msg("done passing through city boundary members")
+					berlinBoundary := orb.Polygon(geo.RingFromLineStrings(boundaryLineStrings))
+					berlinBoundary[0] = append(berlinBoundary[0], sharedModels.LeftTopPoint())
+					berlinBoundary[0].Reverse()
+					berlinBoundary[0] = append(berlinBoundary[0],
+						sharedModels.LeftTopPoint(),
+						sharedModels.LeftBottomPoint(),
+						sharedModels.RightBottomPoint(),
+						sharedModels.RightTopPoint(),
+						sharedModels.LeftTopPoint(),
+					)
+					berlinBoundary = simplify.VisvalingamKeep(1500).Polygon(berlinBoundary)
+					newFC.Append(geojson.NewFeature(berlinBoundary))
+					log.Debug().Msg("appended boundary")
+
 					marshalledJSON, err := newFC.MarshalJSON()
 					if err != nil {
 						log.Err(err).Msg("failed marshalling new empty FC JSON")
@@ -132,7 +164,6 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 						w.Write(nil)
 						return
 					}
-					fmt.Println(lobby.ExcludedArea)
 					lobby.ExcludedArea = string(marshalledJSON)
 					result := db.Create(&lobby)
 					if result.Error != nil {
@@ -144,6 +175,8 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 					}
 
 					fmt.Println(lobbyCreationResponse)
+
+					helpers.FCToDB(db, lobby, newFC)
 
 					fmt.Println("Created lobby with token " + lobbyToken)
 					marshalledJson, err := json.Marshal(lobbyCreationResponse)
@@ -280,6 +313,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				if !lobbyTokenRegex.MatchString(lobbyToken) {
 					w.WriteHeader(http.StatusBadRequest)
 					w.Write(nil)
+					return
 				}
 				// finds lobby in DB
 				var lobby models.Lobby
@@ -294,10 +328,72 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				var hiderPoint orb.Point
 				hiderPoint[0] = lobby.HiderLon
 				hiderPoint[1] = lobby.HiderLat
+
 				var seekerPoint orb.Point
 				seekerPoint[0] = lobby.SeekerLon
 				seekerPoint[1] = lobby.SeekerLat
 
+				var sameBezirk bool
+				var seekerBezirkName string
+
+				bezirkPolygons := make(map[string]orb.Polygon)
+				for _, bezirkRelation := range processedData.Bezirke {
+					bezirkName := bezirkRelation.Tags.Find("name")
+					var bezirkLineStrings []orb.LineString
+					for _, member := range bezirkRelation.Members {
+						if member.Type == "way" {
+							wayID, err := member.ElementID().WayID()
+							if err != nil {
+								log.Err(err).Msg("")
+								continue
+							}
+							way := processedData.Ways[wayID]
+							lineString := geo.LineStringFromWay(way, processedData.Nodes)
+							bezirkLineStrings = append(bezirkLineStrings, lineString)
+						}
+					}
+					bezirkPolygon := orb.Polygon(geo.RingFromLineStrings(bezirkLineStrings))
+					bezirkPolygons[bezirkName] = bezirkPolygon
+					seekerInside := planar.PolygonContains(bezirkPolygon, seekerPoint)
+					hiderInside := planar.PolygonContains(bezirkPolygon, hiderPoint)
+					if seekerInside && hiderInside {
+						sameBezirk = true
+						seekerBezirkName = bezirkName
+					} else if seekerInside && !hiderInside {
+						sameBezirk = false
+						seekerBezirkName = bezirkName
+					} else if !seekerInside && hiderInside {
+						sameBezirk = false
+					}
+				}
+				fc, err := helpers.FCFromDB(lobby)
+				if err != nil {
+					log.Err(err).Msg("")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+
+				// same bezirk, color all other bezirke
+				if sameBezirk {
+					for bezirkName, bezirkPolygon := range bezirkPolygons {
+						if bezirkName != seekerBezirkName {
+							fc.Append(geojson.NewFeature(bezirkPolygon))
+							err = helpers.FCToDB(db, lobby, fc)
+						}
+					}
+					// different bezirk, only color bezirk of seeker
+				} else {
+					seekerBezirk := bezirkPolygons[seekerBezirkName]
+					fc.Append(geojson.NewFeature(seekerBezirk))
+					err = helpers.FCToDB(db, lobby, fc)
+				}
+				if err != nil {
+					log.Err(err).Msg("")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
 				w.WriteHeader(http.StatusOK)
 				w.Write(nil)
 			})
@@ -443,7 +539,6 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				return
 			}
 
-			fmt.Println(lobby.ZoneCenterLat, lobby.ZoneCenterLon)
 			result = db.Save(&lobby)
 			if result.Error != nil {
 				log.Err(err).Msg("failed to save location to DB with error " + fmt.Sprint(result.Error))
@@ -503,7 +598,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 			isValidPoint := geo.PointIsValidZoneCenter(locationRequest.Location, processedData)
 
 			if !isValidPoint {
-				w.WriteHeader(http.StatusForbidden)
+				w.WriteHeader(http.StatusBadRequest)
 				w.Write(nil)
 				return
 			}
@@ -518,7 +613,6 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 			log.Debug().Msg(fmt.Sprint("saved zone center", locationRequest.Location))
 
 			result = db.Save(&lobby)
-			fmt.Println(lobby)
 			if result.Error != nil {
 				log.Err(err).Msg("failed to save readiness info to DB  with error " + fmt.Sprint(result.Error))
 				w.WriteHeader(http.StatusInternalServerError)
@@ -638,7 +732,6 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 			}
 			var startTime sharedModels.TimeResponse
 
-			fmt.Println(lobby.RunStartTime)
 			startTime.Time = lobby.RunStartTime
 
 			marshalledJson, err := json.Marshal(startTime)

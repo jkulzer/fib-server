@@ -11,7 +11,6 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/jkulzer/fib-server/db"
-	_ "github.com/jkulzer/fib-server/docs"
 	"github.com/jkulzer/fib-server/geo"
 	"github.com/jkulzer/fib-server/routes"
 )

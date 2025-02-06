@@ -5,6 +5,7 @@ import (
 
 	"github.com/golang/geo/s2"
 
+	"github.com/jkulzer/fib-server/sharedModels"
 	"github.com/jkulzer/osm"
 
 	"github.com/paulmach/orb"
@@ -75,32 +76,11 @@ func NewInverseCircle(center orb.Point, radius float64) geojson.Feature {
 
 	wgsFirstRingPoint := pointOnCircle(center, scaleFactor, -math.Pi)
 
-	leftBound := 12.5
-	rightBound := float64(14)
-	topBound := 52.7
-	bottomBound := float64(52)
-
-	var leftTopPoint orb.Point
-	leftTopPoint[0] = leftBound
-	leftTopPoint[1] = topBound
-
-	var rightTopPoint orb.Point
-	rightTopPoint[0] = rightBound
-	rightTopPoint[1] = topBound
-
-	var rightBottomPoint orb.Point
-	rightBottomPoint[0] = rightBound
-	rightBottomPoint[1] = bottomBound
-
-	var leftBottomPoint orb.Point
-	leftBottomPoint[0] = leftBound
-	leftBottomPoint[1] = bottomBound
-
-	ring = append(ring, leftTopPoint)
-	ring = append(ring, rightTopPoint)
-	ring = append(ring, rightBottomPoint)
-	ring = append(ring, leftBottomPoint)
-	ring = append(ring, leftTopPoint)
+	ring = append(ring, sharedModels.LeftTopPoint())
+	ring = append(ring, sharedModels.RightTopPoint())
+	ring = append(ring, sharedModels.RightBottomPoint())
+	ring = append(ring, sharedModels.LeftBottomPoint())
+	ring = append(ring, sharedModels.LeftTopPoint())
 
 	ring = append(ring, wgsFirstRingPoint)
 
@@ -110,7 +90,7 @@ func NewInverseCircle(center orb.Point, radius float64) geojson.Feature {
 		ring = append(ring, wgsRingPoint)
 	}
 	ring = append(ring, wgsFirstRingPoint)
-	ring = append(ring, leftTopPoint)
+	ring = append(ring, sharedModels.LeftTopPoint())
 
 	ring.Reverse()
 	return *geojson.NewFeature(ring)

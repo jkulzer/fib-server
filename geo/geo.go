@@ -127,7 +127,7 @@ func ProcessData() ProcessedData {
 					continue
 				}
 				way := ways[wayID]
-				lineString := lineStringFromWay(way, nodes)
+				lineString := LineStringFromWay(way, nodes)
 				bezirkLineStrings = append(bezirkLineStrings, lineString)
 			}
 		}
@@ -135,7 +135,7 @@ func ProcessData() ProcessedData {
 			fc.Append(geojson.NewFeature(ls))
 		}
 		writeAndMarshallFC(fc)
-		bezirkPolygon := orb.Polygon(ringFromLineStrings(bezirkLineStrings))
+		bezirkPolygon := orb.Polygon(RingFromLineStrings(bezirkLineStrings))
 		bezirkPolygons[bezirkName] = bezirkPolygon
 	}
 
@@ -153,11 +153,11 @@ func ProcessData() ProcessedData {
 				continue
 			}
 			way := ways[wayID]
-			lineString := lineStringFromWay(way, nodes)
+			lineString := LineStringFromWay(way, nodes)
 			berlinBoundaryLineStrings = append(berlinBoundaryLineStrings, lineString)
 		}
 	}
-	berlinBoundaryPolygon := orb.Polygon(ringFromLineStrings(berlinBoundaryLineStrings))
+	berlinBoundaryPolygon := orb.Polygon(RingFromLineStrings(berlinBoundaryLineStrings))
 	// simplify.DouglasPeucker(0.001).Polygon(berlinBoundaryPolygon)
 	berlinBoundaryFeature := geojson.NewFeature(berlinBoundaryPolygon)
 	berlinBoundaryFeature.Properties["category"] = "game_area_border"
@@ -171,6 +171,7 @@ func ProcessData() ProcessedData {
 
 	return ProcessedData{
 		CityBoundary:                   berlinBoundary,
+		Bezirke:                        bezirke,
 		Nodes:                          nodes,
 		Ways:                           ways,
 		Relations:                      relations,
@@ -190,7 +191,7 @@ func PointIsValidZoneCenter(hiderPoint orb.Point, data ProcessedData) bool {
 	return false
 }
 
-func lineStringFromWay(way *osm.Way, nodes map[osm.NodeID]*osm.Node) orb.LineString {
+func LineStringFromWay(way *osm.Way, nodes map[osm.NodeID]*osm.Node) orb.LineString {
 	var lineString orb.LineString
 	if way != nil {
 		for _, wayNode := range way.Nodes {
@@ -215,7 +216,7 @@ func addToFeatureCollection(category string, fc *geojson.FeatureCollection, coll
 	}
 }
 
-func ringFromLineStrings(lineStrings []orb.LineString) []orb.Ring {
+func RingFromLineStrings(lineStrings []orb.LineString) []orb.Ring {
 	var theRing orb.Ring
 	startLineString := lineStrings[0]
 

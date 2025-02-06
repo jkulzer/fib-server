@@ -1,9 +1,13 @@
 package helpers
 
 import (
-	"gorm.io/gorm"
 	"io"
 	"math/rand"
+	"os"
+
+	"gorm.io/gorm"
+
+	"github.com/rs/zerolog/log"
 
 	"github.com/jkulzer/fib-server/models"
 	"github.com/paulmach/orb/geojson"
@@ -48,6 +52,14 @@ func FCToDB(db *gorm.DB, lobby models.Lobby, fc *geojson.FeatureCollection) erro
 		return err
 	}
 	lobby.ExcludedArea = string(areaJson)
+
+	f, err := os.Create("mapdata.geojson")
+	defer f.Close()
+	_, err = f.Write(areaJson)
+	if err != nil {
+		log.Err(err).Msg("")
+	}
+
 	result := db.Save(&lobby)
 	if result.Error != nil {
 		return result.Error

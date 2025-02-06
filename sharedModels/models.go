@@ -69,10 +69,44 @@ type TimeResponse struct {
 
 // var RunDuration time.Duration = 45 * time.Minute
 
-var RunDuration time.Duration = 1 * time.Minute
+// var RunDuration time.Duration = 1 * time.Minute
+var RunDuration time.Duration = 15 * time.Second
 
 var HidingZoneRadius float64 = 500.0
 
 type LocationRequest struct {
 	Location orb.Point
+}
+
+var leftBound float64 = 12
+var rightBound float64 = 15
+var topBound float64 = 53
+var bottomBound float64 = 51
+
+func LeftTopPoint() orb.Point {
+	var leftTopPoint orb.Point
+	leftTopPoint[0] = leftBound
+	leftTopPoint[1] = topBound
+	return leftTopPoint
+}
+
+func RightTopPoint() orb.Point {
+	var rightTopPoint orb.Point
+	rightTopPoint[0] = rightBound
+	rightTopPoint[1] = topBound
+	return rightTopPoint
+}
+
+func RightBottomPoint() orb.Point {
+	var rightBottomPoint orb.Point
+	rightBottomPoint[0] = rightBound
+	rightBottomPoint[1] = bottomBound
+	return rightBottomPoint
+}
+
+func LeftBottomPoint() orb.Point {
+	var leftBottomPoint orb.Point
+	leftBottomPoint[0] = leftBound
+	leftBottomPoint[1] = bottomBound
+	return leftBottomPoint
 }
