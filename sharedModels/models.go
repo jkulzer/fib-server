@@ -2,7 +2,10 @@ package sharedModels
 
 import (
 	"github.com/google/uuid"
+
+	"github.com/jkulzer/osm"
 	"github.com/paulmach/orb"
+
 	"time"
 )
 
@@ -40,6 +43,19 @@ type UserRoleRequest struct {
 	Role UserRole
 }
 
+type RouteProximityResponse struct {
+	Routes []RouteDetails
+}
+
+type TrainServiceRequest struct {
+	RouteID osm.RelationID
+}
+
+type RouteDetails struct {
+	Name    string
+	RouteID osm.RelationID
+}
+
 type GamePhase int
 
 const (
@@ -61,6 +77,10 @@ type ReadinessResponse struct {
 
 type SetReadinessRequest struct {
 	Ready bool
+}
+
+type ThermometerRequest struct {
+	Distance float64
 }
 
 type TimeResponse struct {

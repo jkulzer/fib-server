@@ -3,6 +3,7 @@ package geo
 import (
 	"context"
 	// "encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -26,6 +27,7 @@ type ProcessedData struct {
 	CityBoundary                   *osm.Relation
 	Nodes                          map[osm.NodeID]*osm.Node
 	Ways                           map[osm.WayID]*osm.Way
+	AllRailRoutes                  map[osm.RelationID]*osm.Relation
 	Relations                      map[osm.RelationID]*osm.Relation
 	RailwayStations                map[osm.NodeID]*osm.Node
 	Bezirke                        map[osm.RelationID]*osm.Relation
@@ -54,13 +56,11 @@ func ProcessData() ProcessedData {
 	railwayStations := make(map[osm.NodeID]*osm.Node)
 
 	// map stuff
-	primaryHighways := make(map[osm.WayID]*osm.Way)
-	secondaryHighways := make(map[osm.WayID]*osm.Way)
-	tertiaryHighways := make(map[osm.WayID]*osm.Way)
 	rivers := make(map[osm.WayID]*osm.Way)
 
 	subwayLines := make(map[osm.RelationID]*osm.Relation)
 	sbahnLines := make(map[osm.RelationID]*osm.Relation)
+	allRailRoutes := make(map[osm.RelationID]*osm.Relation)
 
 	var berlinBoundary *osm.Relation
 
@@ -77,19 +77,10 @@ func ProcessData() ProcessedData {
 					railwayStations[v.ID] = v
 				}
 			}
-			// g.AddNode(simple.Node(v.ID))
 		case *osm.Way:
 			ways[v.ID] = v
 			if v.Tags.Find("waterway") == "river" {
 				rivers[v.ID] = v
-			}
-			highwayTag := v.Tags.Find("highway")
-			if highwayTag == "primary" {
-				primaryHighways[v.ID] = v
-			} else if highwayTag == "secondary" {
-				secondaryHighways[v.ID] = v
-			} else if highwayTag == "tertiary" {
-				tertiaryHighways[v.ID] = v
 			}
 		case *osm.Relation:
 			relations[v.ID] = v
@@ -105,8 +96,12 @@ func ProcessData() ProcessedData {
 			routeTag := v.Tags.Find("route")
 			if routeTag == "subway" {
 				subwayLines[v.ID] = v
+				allRailRoutes[v.ID] = v
 			} else if routeTag == "light_rail" {
 				sbahnLines[v.ID] = v
+				allRailRoutes[v.ID] = v
+			} else if v.Tags.Find("service") == "regional" {
+				allRailRoutes[v.ID] = v
 			}
 		default:
 			// Handle other OSM object types if needed
@@ -114,34 +109,6 @@ func ProcessData() ProcessedData {
 	}
 
 	fc := geojson.NewFeatureCollection()
-
-	bezirkPolygons := make(map[string]orb.Polygon)
-	for _, bezirkRelation := range bezirke {
-		bezirkName := bezirkRelation.Tags.Find("name")
-		var bezirkLineStrings []orb.LineString
-		for _, member := range bezirkRelation.Members {
-			if member.Type == "way" {
-				wayID, err := member.ElementID().WayID()
-				if err != nil {
-					log.Err(err).Msg("")
-					continue
-				}
-				way := ways[wayID]
-				lineString := LineStringFromWay(way, nodes)
-				bezirkLineStrings = append(bezirkLineStrings, lineString)
-			}
-		}
-		for _, ls := range bezirkLineStrings {
-			fc.Append(geojson.NewFeature(ls))
-		}
-		writeAndMarshallFC(fc)
-		bezirkPolygon := orb.Polygon(RingFromLineStrings(bezirkLineStrings))
-		bezirkPolygons[bezirkName] = bezirkPolygon
-	}
-
-	for _, polygon := range bezirkPolygons {
-		fc.Append(geojson.NewFeature(polygon))
-	}
 
 	var berlinBoundaryLineStrings []orb.LineString
 
@@ -157,14 +124,17 @@ func ProcessData() ProcessedData {
 			berlinBoundaryLineStrings = append(berlinBoundaryLineStrings, lineString)
 		}
 	}
-	berlinBoundaryPolygon := orb.Polygon(RingFromLineStrings(berlinBoundaryLineStrings))
-	// simplify.DouglasPeucker(0.001).Polygon(berlinBoundaryPolygon)
-	berlinBoundaryFeature := geojson.NewFeature(berlinBoundaryPolygon)
-	berlinBoundaryFeature.Properties["category"] = "game_area_border"
-	fc.Append(berlinBoundaryFeature)
+	berlinBoundaryRing, err := RingFromLineStrings(berlinBoundaryLineStrings)
+	if err != nil {
 
+		berlinBoundaryPolygon := orb.Polygon(berlinBoundaryRing)
+		// simplify.DouglasPeucker(0.001).Polygon(berlinBoundaryPolygon)
+		berlinBoundaryFeature := geojson.NewFeature(berlinBoundaryPolygon)
+		berlinBoundaryFeature.Properties["category"] = "game_area_border"
+		fc.Append(berlinBoundaryFeature)
+
+	}
 	marshalledFC, _ := fc.MarshalJSON()
-
 	// writeAndMarshallFC(fc)
 
 	log.Info().Msg("finished processing of OSM data")
@@ -172,9 +142,11 @@ func ProcessData() ProcessedData {
 	return ProcessedData{
 		CityBoundary:                   berlinBoundary,
 		Bezirke:                        bezirke,
+		Ortsteile:                      ortsteile,
 		Nodes:                          nodes,
 		Ways:                           ways,
 		Relations:                      relations,
+		AllRailRoutes:                  allRailRoutes,
 		RailwayStations:                railwayStations,
 		MapMarshalledFeatureCollection: marshalledFC,
 	}
@@ -216,19 +188,26 @@ func addToFeatureCollection(category string, fc *geojson.FeatureCollection, coll
 	}
 }
 
-func RingFromLineStrings(lineStrings []orb.LineString) []orb.Ring {
+func RingFromLineStrings(lineStrings []orb.LineString) ([]orb.Ring, error) {
 	var theRing orb.Ring
 	startLineString := lineStrings[0]
+
+	if len(lineStrings) == 0 || len(lineStrings[0]) == 0 {
+		return []orb.Ring{}, errors.New("empty input")
+	}
 
 	for _, startLSPoint := range startLineString {
 		theRing = append(theRing, startLSPoint)
 	}
+
 	lineStrings = slices.Delete(lineStrings, 0, 1)
 
 	lineStringsLength := len(lineStrings)
 
-	for lineStringsLength > 3 {
+lineLoop:
+	for lineStringsLength > 0 {
 		lastPointAsRef := theRing[len(theRing)-1]
+		foundElement := false
 	forLoop:
 		for lsIndex, lineString := range lineStrings {
 			firstLSElement := lineString[0]
@@ -238,20 +217,27 @@ func RingFromLineStrings(lineStrings []orb.LineString) []orb.Ring {
 				appendLSToRing(lineString, &theRing)
 				lineStrings = slices.Delete(lineStrings, lsIndex, lsIndex+1)
 				lineStringsLength--
+				foundElement = true
 				break forLoop
 			case lastLSElement:
 				lineString.Reverse()
 				appendLSToRing(lineString, &theRing)
 				lineStrings = slices.Delete(lineStrings, lsIndex, lsIndex+1)
 				lineStringsLength--
+				foundElement = true
 				break forLoop
 			}
 		}
+		// no matching lines remaining, therefore terminate the loop
+		if !foundElement {
+			break lineLoop
+		}
 	}
+
 	theRing = append(theRing, theRing[0])
 	theRing.Reverse()
 	var returnRing []orb.Ring
-	return append(returnRing, theRing)
+	return append(returnRing, theRing), nil
 }
 
 func appendLSToRing(lineString orb.LineString, ring *orb.Ring) {

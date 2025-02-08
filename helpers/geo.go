@@ -10,7 +10,6 @@ import (
 
 	"github.com/paulmach/orb"
 	orbGeo "github.com/paulmach/orb/geo"
-	"github.com/paulmach/orb/geojson"
 	"github.com/paulmach/orb/project"
 )
 
@@ -52,7 +51,7 @@ func radiansToDegrees(rad float64) float64 {
 	return rad * 180.0 / math.Pi
 }
 
-func NewCircle(center orb.Point, radius float64) geojson.Feature {
+func NewCircle(center orb.Point, radius float64) orb.Ring {
 	scaleFactor := metersToMercator(center, radius)
 	var ring orb.Ring
 
@@ -68,9 +67,9 @@ func NewCircle(center orb.Point, radius float64) geojson.Feature {
 	ring = append(ring, wgsFirstRingPoint)
 
 	ring.Reverse()
-	return *geojson.NewFeature(ring)
+	return ring
 }
-func NewInverseCircle(center orb.Point, radius float64) geojson.Feature {
+func NewInverseCircle(center orb.Point, radius float64) orb.Ring {
 	scaleFactor := metersToMercator(center, radius)
 	var ring orb.Ring
 
@@ -93,7 +92,7 @@ func NewInverseCircle(center orb.Point, radius float64) geojson.Feature {
 	ring = append(ring, sharedModels.LeftTopPoint())
 
 	ring.Reverse()
-	return *geojson.NewFeature(ring)
+	return ring
 }
 
 func metersToMercator(center orb.Point, meters float64) float64 {
@@ -116,4 +115,13 @@ func pointOnCircle(center orb.Point, scaleFactor float64, positionOnCirc float64
 	firstPoint[0] = firstPoint[0] + math.Cos(positionOnCirc)*scaleFactor
 	wgsFirstRingPoint := project.Point(firstPoint, project.Mercator.ToWGS84)
 	return wgsFirstRingPoint
+}
+
+func GeoRingToS2(ring orb.Ring) *s2.Loop {
+	var s2Points []s2.Point
+	for _, point := range ring {
+		s2Points = append(s2Points, s2.PointFromLatLng(s2.LatLngFromDegrees(point[1], point[0])))
+	}
+
+	return s2.LoopFromPoints(s2Points)
 }
