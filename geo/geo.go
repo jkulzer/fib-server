@@ -3,10 +3,10 @@ package geo
 import (
 	"context"
 	// "encoding/json"
-	"errors"
+	// "errors"
 	"fmt"
 	"os"
-	"slices"
+	// "slices"
 
 	"github.com/rs/zerolog/log"
 
@@ -125,14 +125,13 @@ func ProcessData() ProcessedData {
 		}
 	}
 	berlinBoundaryRing, err := RingFromLineStrings(berlinBoundaryLineStrings)
+	berlinBoundaryRing.Reverse()
 	if err != nil {
-
-		berlinBoundaryPolygon := orb.Polygon(berlinBoundaryRing)
+		berlinBoundaryPolygon := orb.Polygon([]orb.Ring{berlinBoundaryRing})
 		// simplify.DouglasPeucker(0.001).Polygon(berlinBoundaryPolygon)
 		berlinBoundaryFeature := geojson.NewFeature(berlinBoundaryPolygon)
 		berlinBoundaryFeature.Properties["category"] = "game_area_border"
 		fc.Append(berlinBoundaryFeature)
-
 	}
 	marshalledFC, _ := fc.MarshalJSON()
 	// writeAndMarshallFC(fc)
@@ -188,56 +187,25 @@ func addToFeatureCollection(category string, fc *geojson.FeatureCollection, coll
 	}
 }
 
-func RingFromLineStrings(lineStrings []orb.LineString) ([]orb.Ring, error) {
+func RingFromLineStrings(lineStrings []orb.LineString) (orb.Ring, error) {
 	var theRing orb.Ring
-	startLineString := lineStrings[0]
-
-	if len(lineStrings) == 0 || len(lineStrings[0]) == 0 {
-		return []orb.Ring{}, errors.New("empty input")
-	}
-
-	for _, startLSPoint := range startLineString {
-		theRing = append(theRing, startLSPoint)
-	}
-
-	lineStrings = slices.Delete(lineStrings, 0, 1)
-
-	lineStringsLength := len(lineStrings)
-
-lineLoop:
-	for lineStringsLength > 0 {
-		lastPointAsRef := theRing[len(theRing)-1]
-		foundElement := false
-	forLoop:
-		for lsIndex, lineString := range lineStrings {
-			firstLSElement := lineString[0]
-			lastLSElement := lineString[len(lineString)-1]
-			switch lastPointAsRef {
-			case firstLSElement:
-				appendLSToRing(lineString, &theRing)
-				lineStrings = slices.Delete(lineStrings, lsIndex, lsIndex+1)
-				lineStringsLength--
-				foundElement = true
-				break forLoop
-			case lastLSElement:
-				lineString.Reverse()
-				appendLSToRing(lineString, &theRing)
-				lineStrings = slices.Delete(lineStrings, lsIndex, lsIndex+1)
-				lineStringsLength--
-				foundElement = true
-				break forLoop
+	for _, ls := range lineStrings {
+		if len(theRing) > 0 {
+			if theRing[len(theRing)-1] != ls[0] {
+				if theRing[len(theRing)-1] == ls[len(ls)-1] {
+					ls.Reverse()
+				} else {
+					continue
+				}
 			}
 		}
-		// no matching lines remaining, therefore terminate the loop
-		if !foundElement {
-			break lineLoop
+		for _, point := range ls {
+			theRing = append(theRing, point)
 		}
 	}
 
 	theRing = append(theRing, theRing[0])
-	theRing.Reverse()
-	var returnRing []orb.Ring
-	return append(returnRing, theRing), nil
+	return theRing, nil
 }
 
 func appendLSToRing(lineString orb.LineString, ring *orb.Ring) {

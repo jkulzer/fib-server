@@ -52,4 +52,7 @@ type Lobby struct {
 
 type ContextKey uint
 
-const UserIDKey ContextKey = iota
+const (
+	UserIDKey ContextKey = iota
+	LobbyKey
+)

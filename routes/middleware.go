@@ -2,12 +2,15 @@ package routes
 
 import (
 	"context"
-	// "fmt"
+	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
+
+	chi "github.com/go-chi/chi/v5"
 
 	"github.com/jkulzer/fib-server/models"
 
@@ -44,11 +47,7 @@ func AuthMiddleware(db *gorm.DB) func(http.Handler) http.Handler {
 			// log.Debug().Msg("user token: " + token)
 
 			var session models.Session
-			// result := db.Where("token = ?", parsedToken.String()).First(&models.Session{})
 			result := db.Where(&models.Session{Token: parsedToken}).First(&session)
-			// log.Debug().Msg("found session has token " + fmt.Sprint(session.Token))
-			// log.Debug().Msg("found session has user id " + fmt.Sprint(session.UserAccountID))
-			// if the user creation fails,
 			if result.Error != nil || session.Token.String() == nullUuidString || token == nullUuidString {
 				log.Info().Msg("failed to find token, unauthenticated")
 				w.WriteHeader(http.StatusUnauthorized)
@@ -59,6 +58,38 @@ func AuthMiddleware(db *gorm.DB) func(http.Handler) http.Handler {
 				// Token is valid; proceed to the next handler
 				next.ServeHTTP(w, r.WithContext(ctx))
 			}
+		})
+	}
+}
+
+func LobbyMiddleware(db *gorm.DB) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			lobbyToken := chi.URLParam(r, "index")
+			// regex for verifying the lobby token
+			lobbyTokenRegex := regexp.MustCompile("^[A-Z0-9]{6}$")
+			// if the input is valid
+			if !lobbyTokenRegex.MatchString(lobbyToken) {
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write(nil)
+				return
+			}
+			// finds lobby in DB
+			var lobby models.Lobby
+			result := db.Where("token = ?", lobbyToken).First(&lobby)
+			// if lobby can't be found
+			if result.Error != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write(nil)
+				return
+			}
+			userID, _ := r.Context().Value(models.UserIDKey).(uint)
+			fmt.Println(userID)
+			ctx := context.WithValue(r.Context(), models.LobbyKey, lobby)
+			userID, _ = ctx.Value(models.UserIDKey).(uint)
+			fmt.Println(userID)
+			// found lobby
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }

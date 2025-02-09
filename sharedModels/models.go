@@ -130,3 +130,14 @@ func LeftBottomPoint() orb.Point {
 	leftBottomPoint[1] = bottomBound
 	return leftBottomPoint
 }
+
+func WideOutsideBound() orb.Ring {
+	return orb.Ring{
+		LeftTopPoint(),
+		RightTopPoint(),
+		RightBottomPoint(),
+		LeftBottomPoint(),
+		LeftTopPoint(),
+	}
+
+}
