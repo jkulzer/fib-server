@@ -87,10 +87,21 @@ type TimeResponse struct {
 	Time time.Time
 }
 
+type HistoryItem struct {
+	Title       string
+	Description string
+}
+
+type History []HistoryItem
+
+type HistoryResponse struct {
+	History History
+}
+
 // var RunDuration time.Duration = 45 * time.Minute
 
 // var RunDuration time.Duration = 1 * time.Minute
-var RunDuration time.Duration = 15 * time.Second
+var RunDuration time.Duration = 30 * time.Second
 
 var HidingZoneRadius float64 = 500.0
 
@@ -139,5 +150,6 @@ func WideOutsideBound() orb.Ring {
 		LeftBottomPoint(),
 		LeftTopPoint(),
 	}
-
 }
+
+var ZeroPoint = orb.Point{0, 0}

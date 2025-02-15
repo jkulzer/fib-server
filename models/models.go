@@ -48,6 +48,15 @@ type Lobby struct {
 	ThermometerDistance float64
 	ThermometerStartLat float64
 	ThermometerStartLon float64
+	History             []HistoryInDB `gorm:"foreignKey:LobbyID"`
+}
+
+type HistoryInDB struct {
+	gorm.Model
+	LobbyID     uint
+	LobbyType   string
+	Title       string
+	Description string
 }
 
 type ContextKey uint

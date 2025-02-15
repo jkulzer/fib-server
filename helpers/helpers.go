@@ -2,6 +2,7 @@ package helpers
 
 import (
 	"io"
+	"math"
 	"math/rand"
 	"os"
 
@@ -65,4 +66,16 @@ func FCToDB(db *gorm.DB, lobby models.Lobby, fc *geojson.FeatureCollection) erro
 		return result.Error
 	}
 	return nil
+}
+
+// normalizeBearing adjusts the angle to be within the range [-180, 180)
+func NormalizeBearing(angle float64) float64 {
+	// Shift the angle to the 0-360 range, then adjust back to -180-180
+	angle = math.Mod(angle, 360)
+	if angle > 180 {
+		angle -= 360
+	} else if angle < -180 {
+		angle += 360
+	}
+	return angle
 }

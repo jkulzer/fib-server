@@ -6,7 +6,8 @@ import (
 	// "errors"
 	"fmt"
 	"os"
-	// "slices"
+	"slices"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 
@@ -27,8 +28,12 @@ type ProcessedData struct {
 	CityBoundary                   *osm.Relation
 	Nodes                          map[osm.NodeID]*osm.Node
 	Ways                           map[osm.WayID]*osm.Way
-	AllRailRoutes                  map[osm.RelationID]*osm.Relation
 	Relations                      map[osm.RelationID]*osm.Relation
+	AllRailRoutes                  map[osm.RelationID]*osm.Relation
+	McDonaldsNodes                 map[osm.NodeID]*osm.Node
+	McDonaldsWays                  map[osm.WayID]*osm.Way
+	IkeaWays                       map[osm.WayID]*osm.Way
+	SpreeLineStrings               []orb.LineString
 	RailwayStations                map[osm.NodeID]*osm.Node
 	Bezirke                        map[osm.RelationID]*osm.Relation
 	Ortsteile                      map[osm.RelationID]*osm.Relation
@@ -55,12 +60,17 @@ func ProcessData() ProcessedData {
 	// hiding point validity
 	railwayStations := make(map[osm.NodeID]*osm.Node)
 
-	// map stuff
-	rivers := make(map[osm.WayID]*osm.Way)
+	mcDonaldsNodes := make(map[osm.NodeID]*osm.Node)
+	mcDonaldsWays := make(map[osm.WayID]*osm.Way)
+
+	ikeaWays := make(map[osm.WayID]*osm.Way)
 
 	subwayLines := make(map[osm.RelationID]*osm.Relation)
 	sbahnLines := make(map[osm.RelationID]*osm.Relation)
 	allRailRoutes := make(map[osm.RelationID]*osm.Relation)
+
+	var spreeRelation *osm.Relation
+	var spreeLineStrings []orb.LineString
 
 	var berlinBoundary *osm.Relation
 
@@ -70,24 +80,30 @@ func ProcessData() ProcessedData {
 
 		switch v := obj.(type) {
 		case *osm.Node:
-			_ = v
 			nodes[v.ID] = v
 			if v.Tags.Find("railway") == "station" || v.Tags.Find("railway") == "halt" {
 				if v.Tags.Find("usage ") != "tourism" {
 					railwayStations[v.ID] = v
 				}
 			}
+			if v.Tags.Find("brand") == "McDonald's" {
+				mcDonaldsNodes[v.ID] = v
+			}
 		case *osm.Way:
 			ways[v.ID] = v
-			if v.Tags.Find("waterway") == "river" {
-				rivers[v.ID] = v
+			brandTag := v.Tags.Find("brand")
+			if brandTag == "McDonald's" {
+				mcDonaldsWays[v.ID] = v
+			}
+			if brandTag == "IKEA" && !strings.Contains(v.Tags.Find("name"), "Planning studio") {
+				ikeaWays[v.ID] = v
 			}
 		case *osm.Relation:
 			relations[v.ID] = v
 			if v.Tags.Find("admin_level") == "9" && v.Tags.Find("name:prefix") == "Bezirk" {
 				bezirke[v.ID] = v
 			}
-			if v.Tags.Find("admin_level") == "10" && v.Tags.Find("name:prefix") == "Ortsteil" {
+			if v.Tags.Find("admin_level") == "10" {
 				ortsteile[v.ID] = v
 			}
 			if v.Tags.Find("admin_level") == "4" && v.Tags.Find("de:amtlicher_gemeindeschluessel") == "11000000" {
@@ -103,6 +119,9 @@ func ProcessData() ProcessedData {
 			} else if v.Tags.Find("service") == "regional" {
 				allRailRoutes[v.ID] = v
 			}
+			if v.Tags.Find("name") == "Spree" {
+				spreeRelation = v
+			}
 		default:
 			// Handle other OSM object types if needed
 		}
@@ -111,6 +130,21 @@ func ProcessData() ProcessedData {
 	fc := geojson.NewFeatureCollection()
 
 	var berlinBoundaryLineStrings []orb.LineString
+
+	for _, member := range spreeRelation.Members {
+		if member.Type == "way" {
+			wayID, err := member.ElementID().WayID()
+			if err != nil {
+				log.Err(err).Msg("")
+				continue
+			}
+			way := ways[wayID]
+			if way != nil {
+				lineString := LineStringFromWay(way, nodes)
+				spreeLineStrings = append(spreeLineStrings, lineString)
+			}
+		}
+	}
 
 	for _, member := range berlinBoundary.Members {
 		if member.Type == "way" {
@@ -145,6 +179,10 @@ func ProcessData() ProcessedData {
 		Nodes:                          nodes,
 		Ways:                           ways,
 		Relations:                      relations,
+		McDonaldsNodes:                 mcDonaldsNodes,
+		McDonaldsWays:                  mcDonaldsWays,
+		IkeaWays:                       ikeaWays,
+		SpreeLineStrings:               spreeLineStrings,
 		AllRailRoutes:                  allRailRoutes,
 		RailwayStations:                railwayStations,
 		MapMarshalledFeatureCollection: marshalledFC,
@@ -225,4 +263,70 @@ func writeAndMarshallFC(fc *geojson.FeatureCollection) {
 	if err != nil {
 		log.Err(err).Msg("")
 	}
+}
+
+func RelationToMultiPolygon(relationToConvert osm.Relation, nodes map[osm.NodeID]*osm.Node, ways map[osm.WayID]*osm.Way) (orb.MultiPolygon, error) {
+	var lineStrings []orb.LineString
+	for _, member := range relationToConvert.Members {
+		if member.Type == "way" {
+			wayID, err := member.ElementID().WayID()
+			if err != nil {
+				return orb.MultiPolygon{}, err
+			}
+			way := ways[wayID]
+			if way == nil {
+				continue
+			}
+			lineStrings = append(lineStrings, LineStringFromWay(way, nodes))
+		}
+	}
+
+	multiPolygon := lineStringsToMultiPolygon(lineStrings)
+
+	return multiPolygon, nil
+}
+
+func lineStringsToMultiPolygon(lineStrings []orb.LineString) orb.MultiPolygon {
+	var multiPolygon orb.MultiPolygon
+	var polygon orb.Polygon
+
+	firstLineString := lineStrings[0]
+
+	var initialRing orb.Ring
+	initialRing = append(initialRing, firstLineString[0])
+
+	polygon = append(polygon, initialRing)
+
+	lineStrings = slices.Delete(lineStrings, 0, 0)
+
+	for len(lineStrings) > 0 {
+		foundMatch := false
+	forLoop:
+		for lsIndex, ls := range lineStrings {
+			lastPoint := polygon[0][len(polygon[0])-1]
+			switch lastPoint {
+			case ls[0]:
+				appendLSToRing(ls, &polygon[0])
+				lineStrings = slices.Delete(lineStrings, lsIndex, lsIndex+1)
+				foundMatch = true
+				break forLoop
+			case ls[len(ls)-1]:
+				ls.Reverse()
+				appendLSToRing(ls, &polygon[0])
+				lineStrings = slices.Delete(lineStrings, lsIndex, lsIndex+1)
+				foundMatch = true
+				break forLoop
+			}
+		}
+		if !foundMatch {
+			break
+		}
+	}
+	var additionalPolygons orb.MultiPolygon
+	if len(lineStrings) > 0 {
+		additionalPolygons = lineStringsToMultiPolygon(lineStrings)
+	}
+	multiPolygon = append(multiPolygon, additionalPolygons...)
+	multiPolygon = append(multiPolygon, polygon)
+	return multiPolygon
 }

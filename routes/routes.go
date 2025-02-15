@@ -463,13 +463,14 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 					}
 					go func() {
 						runTimer := time.NewTimer(sharedModels.RunDuration)
+						lobbyToken := lobby.Token
 
 						<-runTimer.C
 						log.Info().Msg("Hiding Time Finished")
 						var lobby models.Lobby
-						result := db.Where("token = ?", lobby.Token).First(&lobby)
+						result := db.Where("token = ?", lobbyToken).First(&lobby)
 						if result.Error != nil {
-							log.Err(err).Msg("failed to save finished hiding time to DB")
+							log.Err(err).Msg("failed to save finished hiding time to DB for lobby " + lobbyToken)
 							return
 						}
 						lobby.Phase = sharedModels.PhaseLocationNarrowing
@@ -611,6 +612,35 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 					w.Write(nil)
 					return
 				}
+			})
+			r.Get("/history", func(w http.ResponseWriter, r *http.Request) {
+				userID, isUint := r.Context().Value(models.UserIDKey).(uint)
+				if !isUint {
+					log.Debug().Msg(fmt.Sprint(userID))
+					log.Warn().Msg("failed to convert userID to uint in role selection")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
+				if !isLobby {
+					fmt.Println(lobby)
+					log.Warn().Msg("couldn't cast lobby value from context")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+
+				fmt.Println(lobby.History)
+
+				marshaledHistory, err := json.Marshal(lobby.History)
+				if err != nil {
+					log.Err(err).Msg("failed marshaling history json")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+				}
+				w.WriteHeader(http.StatusOK)
+				w.Write(marshaledHistory)
 			})
 			r.Route("/questions", func(r chi.Router) {
 				r.Use(AuthMiddleware(db))
@@ -766,11 +796,16 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 						}
 					}
 
+					var description string
+
 					if isOnLine {
 						outsideGeom := helpers.G2p(orb.Polygon{sharedModels.WideOutsideBound()})
 						diff, err := polygol.Difference(outsideGeom, circleGeomList...)
 						if err != nil {
 							log.Err(err).Msg("failed to make union of circles for train service question")
+							w.WriteHeader(http.StatusInternalServerError)
+							w.Write(nil)
+							return
 						}
 						exclusionPolygons := helpers.P2g(diff)
 
@@ -780,10 +815,25 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 							}
 						}
 						fc.Append(geojson.NewFeature(exclusionPolygons))
+						description = route.Tags.Find("name") + " stops in the hiding zone"
 					} else {
 						for _, circle := range circleList {
 							fc.Append(geojson.NewFeature(circle))
 						}
+						description = route.Tags.Find("name") + " doesn't stop in the hiding zone"
+					}
+
+					historyItem := models.HistoryInDB{
+						LobbyID:     lobby.ID,
+						Title:       "Train Service",
+						Description: description,
+					}
+					result := db.Create(&historyItem)
+					if result.Error != nil {
+						log.Err(err).Msg("failed creating history item")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
 					}
 
 					err = helpers.FCToDB(db, lobby, fc)
@@ -825,6 +875,21 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 					seekerPoint[1] = lobby.SeekerLat
 
 					distanceSeekerHider := orbGeo.DistanceHaversine(hiderPoint, seekerPoint)
+					seekerAddr, err := getClosestAdressString(seekerPoint)
+					if err != nil {
+						log.Err(err).Msg("failed getting seeker address")
+						w.WriteHeader(http.StatusBadRequest)
+						w.Write(nil)
+						return
+					}
+
+					var radiusDistance string
+
+					if radius < 1000 {
+						radiusDistance = fmt.Sprint(radius) + "m"
+					} else {
+						radiusDistance = fmt.Sprint(radius/1000) + "km"
+					}
 
 					if distanceSeekerHider < radius {
 						// it's a hit!
@@ -839,6 +904,19 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 						}
 						inverseCircleFeature := geojson.NewFeature(inverseCircle)
 						fc.Append(inverseCircleFeature)
+						historyItem := models.HistoryInDB{
+							LobbyID:     lobby.ID,
+							Title:       "Radar",
+							Description: "Hider is within " + radiusDistance + " of " + seekerAddr,
+						}
+						result := db.Create(&historyItem)
+						if result.Error != nil {
+							log.Err(err).Msg("failed creating history item")
+							w.WriteHeader(http.StatusInternalServerError)
+							w.Write(nil)
+							return
+						}
+
 						err = helpers.FCToDB(db, lobby, fc)
 						if err != nil {
 							log.Err(err).Msg("")
@@ -861,6 +939,20 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 							w.Write(nil)
 							return
 						}
+
+						historyItem := models.HistoryInDB{
+							LobbyID:     lobby.ID,
+							Title:       "Radar",
+							Description: "Hider is not within " + radiusDistance + " of " + seekerAddr,
+						}
+						result := db.Create(&historyItem)
+						if result.Error != nil {
+							log.Err(err).Msg("failed creating history item")
+							w.WriteHeader(http.StatusInternalServerError)
+							w.Write(nil)
+							return
+						}
+
 						err = helpers.FCToDB(db, lobby, fc)
 						if err != nil {
 							log.Err(err).Msg("")
@@ -872,134 +964,170 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 						w.Write(nil)
 					}
 				})
-				r.Post("/thermometer/start", func(w http.ResponseWriter, r *http.Request) {
-					lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
-					if !isLobby {
-						fmt.Println(lobby)
-						log.Warn().Msg("couldn't cast lobby value from context")
-						w.WriteHeader(http.StatusInternalServerError)
-						w.Write(nil)
-						return
-					}
-
-					body, err := helpers.ReadHttpResponse(r.Body)
-					if err != nil {
-						log.Err(err).Msg("failed to read http request of body " + fmt.Sprint(err))
-					}
-
-					if lobby.ThermometerDistance != 0 {
-						log.Info().Msg("thermometer already started! can't start another one")
-						w.WriteHeader(http.StatusConflict)
-						w.Write(nil)
-						return
-					}
-
-					var thermometerRequest sharedModels.ThermometerRequest
-					err = json.Unmarshal(body, &thermometerRequest)
-					if err != nil {
-						log.Err(err).Msg("")
-						w.WriteHeader(http.StatusBadRequest)
-						w.Write(nil)
-						return
-					}
-					lobby.ThermometerStartLon = lobby.SeekerLon
-					lobby.ThermometerStartLat = lobby.SeekerLat
-					lobby.ThermometerDistance = thermometerRequest.Distance
-
-					result := db.Save(&lobby)
-					if result.Error != nil {
-						log.Err(result.Error).Msg("")
-						w.WriteHeader(http.StatusInternalServerError)
-						w.Write(nil)
-						return
-					}
-					w.WriteHeader(http.StatusOK)
-					w.Write(nil)
-				})
-				r.Post("/thermometer/end", func(w http.ResponseWriter, r *http.Request) {
-					lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
-					if !isLobby {
-						fmt.Println(lobby)
-						log.Warn().Msg("couldn't cast lobby value from context")
-						w.WriteHeader(http.StatusInternalServerError)
-						w.Write(nil)
-						return
-					}
-
-					if lobby.ThermometerDistance == 0 {
-						w.WriteHeader(http.StatusBadRequest)
-						w.Write(nil)
-						return
-					}
-
-					var hiderPoint orb.Point
-					hiderPoint[0] = lobby.HiderLon
-					hiderPoint[1] = lobby.HiderLat
-
-					var seekerPoint orb.Point
-					seekerPoint[0] = lobby.SeekerLon
-					seekerPoint[1] = lobby.SeekerLat
-
-					var thermometerStartPoint orb.Point
-					thermometerStartPoint[0] = lobby.ThermometerStartLon
-					thermometerStartPoint[1] = lobby.ThermometerStartLat
-
-					if orbGeo.DistanceHaversine(thermometerStartPoint, seekerPoint) < lobby.ThermometerDistance {
-						w.WriteHeader(http.StatusMethodNotAllowed)
-						w.Write(nil)
-						return
-					}
-
-					thermometerBearing := orbGeo.Bearing(thermometerStartPoint, seekerPoint)
-					var leftBearing float64
-					var rightBearing float64
-
-					if thermometerBearing < -90 {
-						leftBearing = thermometerBearing + 90
-						rightBearing = thermometerBearing + 270
-					} else if thermometerBearing > 90 {
-						leftBearing = thermometerBearing - 270
-						rightBearing = thermometerBearing - 90
-					} else {
-						leftBearing = thermometerBearing + 90
-						rightBearing = thermometerBearing - 90
-					}
-
-					if orbGeo.DistanceHaversine(seekerPoint, hiderPoint) < orbGeo.DistanceHaversine(thermometerStartPoint, hiderPoint) {
-						if thermometerBearing > 0 {
-							thermometerBearing = thermometerBearing - 180
-						} else {
-							thermometerBearing = thermometerBearing + 180
+				r.Route("/thermometer", func(r chi.Router) {
+					r.Post("/start", func(w http.ResponseWriter, r *http.Request) {
+						lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
+						if !isLobby {
+							fmt.Println(lobby)
+							log.Warn().Msg("couldn't cast lobby value from context")
+							w.WriteHeader(http.StatusInternalServerError)
+							w.Write(nil)
+							return
 						}
-					}
 
-					boxFrontLeft := orbGeo.PointAtBearingAndDistance(orbGeo.PointAtBearingAndDistance(seekerPoint, thermometerBearing, 30000), leftBearing, 30000)
-					boxFrontRight := orbGeo.PointAtBearingAndDistance(orbGeo.PointAtBearingAndDistance(seekerPoint, thermometerBearing, 30000), rightBearing, 30000)
-					boxLeft := orbGeo.PointAtBearingAndDistance(seekerPoint, leftBearing, 30000)
-					boxRight := orbGeo.PointAtBearingAndDistance(seekerPoint, rightBearing, 30000)
+						body, err := helpers.ReadHttpResponse(r.Body)
+						if err != nil {
+							log.Err(err).Msg("failed to read http request of body " + fmt.Sprint(err))
+						}
 
-					boxPolygon := orb.Polygon{orb.Ring{boxFrontLeft, boxFrontRight, boxRight, boxLeft, boxFrontLeft}}
+						if lobby.ThermometerDistance != 0 {
+							log.Info().Msg("thermometer already started! can't start another one")
+							w.WriteHeader(http.StatusConflict)
+							w.Write(nil)
+							return
+						}
 
-					fc, err := helpers.FCFromDB(lobby)
-					if err != nil {
-						log.Err(err).Msg("")
-						w.WriteHeader(http.StatusInternalServerError)
+						var thermometerRequest sharedModels.ThermometerRequest
+						err = json.Unmarshal(body, &thermometerRequest)
+						if err != nil {
+							log.Err(err).Msg("")
+							w.WriteHeader(http.StatusBadRequest)
+							w.Write(nil)
+							return
+						}
+						lobby.ThermometerStartLon = lobby.SeekerLon
+						lobby.ThermometerStartLat = lobby.SeekerLat
+						lobby.ThermometerDistance = thermometerRequest.Distance
+
+						result := db.Save(&lobby)
+						if result.Error != nil {
+							log.Err(result.Error).Msg("")
+							w.WriteHeader(http.StatusInternalServerError)
+							w.Write(nil)
+							return
+						}
+						w.WriteHeader(http.StatusOK)
 						w.Write(nil)
-						return
-					}
-					fc.Append(geojson.NewFeature(boxPolygon))
-					lobby.ThermometerDistance = 0
+					})
+					r.Post("/end", func(w http.ResponseWriter, r *http.Request) {
+						lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
+						if !isLobby {
+							fmt.Println(lobby)
+							log.Warn().Msg("couldn't cast lobby value from context")
+							w.WriteHeader(http.StatusInternalServerError)
+							w.Write(nil)
+							return
+						}
 
-					err = helpers.FCToDB(db, lobby, fc)
-					if err != nil {
-						log.Err(err).Msg("")
-						w.WriteHeader(http.StatusInternalServerError)
+						if lobby.ThermometerDistance == 0 {
+							w.WriteHeader(http.StatusBadRequest)
+							w.Write(nil)
+							return
+						}
+
+						var hiderPoint orb.Point
+						hiderPoint[0] = lobby.HiderLon
+						hiderPoint[1] = lobby.HiderLat
+
+						var seekerPoint orb.Point
+						seekerPoint[0] = lobby.SeekerLon
+						seekerPoint[1] = lobby.SeekerLat
+
+						var thermometerStartPoint orb.Point
+						thermometerStartPoint[0] = lobby.ThermometerStartLon
+						thermometerStartPoint[1] = lobby.ThermometerStartLat
+
+						if orbGeo.DistanceHaversine(thermometerStartPoint, seekerPoint) < lobby.ThermometerDistance {
+							w.WriteHeader(http.StatusMethodNotAllowed)
+							w.Write(nil)
+							return
+						}
+
+						var description string
+
+						thermometerBearing := orbGeo.Bearing(thermometerStartPoint, seekerPoint)
+						var leftBearing float64
+						var rightBearing float64
+
+						if thermometerBearing < -90 {
+							leftBearing = thermometerBearing + 90
+							rightBearing = thermometerBearing + 270
+						} else if thermometerBearing > 90 {
+							leftBearing = thermometerBearing - 270
+							rightBearing = thermometerBearing - 90
+						} else {
+							leftBearing = thermometerBearing + 90
+							rightBearing = thermometerBearing - 90
+						}
+
+						thermometerStartAddr, err := getClosestAdressString(thermometerStartPoint)
+						if err != nil {
+							log.Err(err).Msg("failed getting address string")
+							w.WriteHeader(http.StatusInternalServerError)
+							w.Write(nil)
+							return
+						}
+						thermometerEndAddr, err := getClosestAdressString(seekerPoint)
+						if err != nil {
+							log.Err(err).Msg("failed getting address string")
+							w.WriteHeader(http.StatusInternalServerError)
+							w.Write(nil)
+							return
+						}
+
+						// if thermometer is hotter
+						if orbGeo.DistanceHaversine(seekerPoint, hiderPoint) < orbGeo.DistanceHaversine(thermometerStartPoint, hiderPoint) {
+							if thermometerBearing > 0 {
+								thermometerBearing = thermometerBearing - 180
+							} else {
+								thermometerBearing = thermometerBearing + 180
+							}
+							description = "Hider is closer to " + fmt.Sprint(thermometerEndAddr) + " then to " + fmt.Sprint(thermometerStartAddr)
+						} else {
+							description = "Hider is closer to " + fmt.Sprint(thermometerStartAddr) + " then to " + fmt.Sprint(thermometerEndAddr)
+						}
+
+						boxFrontLeft := orbGeo.PointAtBearingAndDistance(orbGeo.PointAtBearingAndDistance(seekerPoint, thermometerBearing, 30000), leftBearing, 30000)
+						boxFrontRight := orbGeo.PointAtBearingAndDistance(orbGeo.PointAtBearingAndDistance(seekerPoint, thermometerBearing, 30000), rightBearing, 30000)
+						boxLeft := orbGeo.PointAtBearingAndDistance(seekerPoint, leftBearing, 30000)
+						boxRight := orbGeo.PointAtBearingAndDistance(seekerPoint, rightBearing, 30000)
+
+						boxPolygon := orb.Polygon{orb.Ring{boxFrontLeft, boxFrontRight, boxRight, boxLeft, boxFrontLeft}}
+
+						fc, err := helpers.FCFromDB(lobby)
+						if err != nil {
+							log.Err(err).Msg("")
+							w.WriteHeader(http.StatusInternalServerError)
+							w.Write(nil)
+							return
+						}
+						fc.Append(geojson.NewFeature(boxPolygon))
+						lobby.ThermometerDistance = 0
+
+						historyItem := models.HistoryInDB{
+							LobbyID:     lobby.ID,
+							Title:       "Thermometer",
+							Description: description,
+						}
+						result := db.Create(&historyItem)
+						if result.Error != nil {
+							log.Err(err).Msg("failed creating history item")
+							w.WriteHeader(http.StatusInternalServerError)
+							w.Write(nil)
+							return
+						}
+
+						err = helpers.FCToDB(db, lobby, fc)
+						if err != nil {
+							log.Err(err).Msg("")
+							w.WriteHeader(http.StatusInternalServerError)
+							w.Write(nil)
+							return
+						}
+
+						w.WriteHeader(http.StatusOK)
 						w.Write(nil)
-						return
-					}
-
-					w.WriteHeader(http.StatusOK)
-					w.Write(nil)
+					})
 				})
 				r.Post("/sameBezirk", func(w http.ResponseWriter, r *http.Request) {
 					lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
@@ -1011,78 +1139,94 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 						return
 					}
 
-					var hiderPoint orb.Point
-					hiderPoint[0] = lobby.HiderLon
-					hiderPoint[1] = lobby.HiderLat
-
-					var seekerPoint orb.Point
-					seekerPoint[0] = lobby.SeekerLon
-					seekerPoint[1] = lobby.SeekerLat
-
-					var sameBezirk bool
-					var seekerBezirkName string
-
-					bezirkPolygons := make(map[string]orb.Polygon)
-					for _, bezirkRelation := range processedData.Bezirke {
-						bezirkName := bezirkRelation.Tags.Find("name")
-						var bezirkLineStrings []orb.LineString
-						for _, member := range bezirkRelation.Members {
-							if member.Type == "way" {
-								wayID, err := member.ElementID().WayID()
-								if err != nil {
-									log.Err(err).Msg("")
-									continue
-								}
-								way := processedData.Ways[wayID]
-								lineString := geo.LineStringFromWay(way, processedData.Nodes)
-								bezirkLineStrings = append(bezirkLineStrings, lineString)
-							}
-						}
-						bezirkRing, err := geo.RingFromLineStrings(bezirkLineStrings)
-						if err == nil {
-							bezirkPolygon := orb.Polygon([]orb.Ring{bezirkRing})
-							bezirkPolygons[bezirkName] = bezirkPolygon
-							seekerInside := planar.PolygonContains(bezirkPolygon, seekerPoint)
-							hiderInside := planar.PolygonContains(bezirkPolygon, hiderPoint)
-							if seekerInside && hiderInside {
-								sameBezirk = true
-								seekerBezirkName = bezirkName
-							} else if seekerInside && !hiderInside {
-								sameBezirk = false
-								seekerBezirkName = bezirkName
-							} else if !seekerInside && hiderInside {
-								sameBezirk = false
-							}
-						}
-					}
 					fc, err := helpers.FCFromDB(lobby)
 					if err != nil {
-						log.Err(err).Msg("")
+						log.Err(err).Msg("failed to get FC from DB while asking same bezirk question")
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write(nil)
 						return
 					}
 
-					// same bezirk, color all other bezirke
-					if sameBezirk {
-						for bezirkName, bezirkPolygon := range bezirkPolygons {
-							if bezirkName != seekerBezirkName {
-								fc.Append(geojson.NewFeature(bezirkPolygon))
-								err = helpers.FCToDB(db, lobby, fc)
+					var zoneCenter orb.Point
+					zoneCenter[1] = lobby.ZoneCenterLat
+					zoneCenter[0] = lobby.ZoneCenterLon
+
+					var seekerPoint orb.Point
+					seekerPoint[1] = lobby.SeekerLat
+					seekerPoint[0] = lobby.SeekerLon
+
+					var hiderPoint orb.Point
+					hiderPoint[1] = lobby.HiderLat
+					hiderPoint[0] = lobby.HiderLon
+
+					polygonMap := make(map[string]orb.MultiPolygon)
+
+					for _, relation := range processedData.Bezirke {
+						bezirkName := relation.Tags.Find("name")
+						if bezirkName == "" {
+							log.Warn().Msg("bezirk with ID " + fmt.Sprint(relation.ElementID()) + " has empty name field")
+							continue
+						}
+						multiPolygon, err := geo.RelationToMultiPolygon(*relation, processedData.Nodes, processedData.Ways)
+						if err != nil {
+							log.Err(err).Msg("failed converting relation to polygon")
+							continue
+						}
+						polygonMap[bezirkName] = multiPolygon
+					}
+
+					var seekerBezirk string
+					var hiderBezirk string
+
+					for bezirkName, multiPolygon := range polygonMap {
+						if planar.MultiPolygonContains(multiPolygon, seekerPoint) {
+							seekerBezirk = bezirkName
+						}
+						if planar.MultiPolygonContains(multiPolygon, hiderPoint) {
+							hiderBezirk = bezirkName
+						}
+					}
+
+					var description string
+
+					if hiderBezirk == seekerBezirk {
+						description = "Hider is in " + fmt.Sprint(hiderBezirk)
+						for bezirkName, polygon := range polygonMap {
+							if bezirkName != hiderBezirk {
+								fc.Append(geojson.NewFeature(polygon))
 							}
 						}
-						// different bezirk, only color bezirk of seeker
 					} else {
-						seekerBezirk := bezirkPolygons[seekerBezirkName]
-						fc.Append(geojson.NewFeature(seekerBezirk))
-						err = helpers.FCToDB(db, lobby, fc)
+						description = "Hider is not in " + fmt.Sprint(hiderBezirk)
+						for bezirkName, polygon := range polygonMap {
+							if bezirkName == seekerBezirk {
+								fc.Append(geojson.NewFeature(polygon))
+							}
+						}
 					}
-					if err != nil {
-						log.Err(err).Msg("")
+					historyItem := models.HistoryInDB{
+						LobbyID:     lobby.ID,
+						Title:       "Same Bezirk",
+						Description: description,
+					}
+					result := db.Create(&historyItem)
+					if result.Error != nil {
+						log.Err(err).Msg("failed creating history item")
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write(nil)
 						return
 					}
+
+					log.Debug().Msg("seeker bezirk is " + seekerBezirk + " and hider bezirk is " + hiderBezirk)
+
+					err = helpers.FCToDB(db, lobby, fc)
+					if err != nil {
+						log.Err(err).Msg("failed to save FC to DB while asking same bezirk question")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
 					w.WriteHeader(http.StatusOK)
 					w.Write(nil)
 				})
@@ -1096,82 +1240,97 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 						return
 					}
 
-					var hiderPoint orb.Point
-					hiderPoint[0] = lobby.HiderLon
-					hiderPoint[1] = lobby.HiderLat
-
-					var seekerPoint orb.Point
-					seekerPoint[0] = lobby.SeekerLon
-					seekerPoint[1] = lobby.SeekerLat
-
-					var sameBezirk bool
-					var seekerOrtsteilName string
-
-					ortsteilPolygons := make(map[string]orb.Polygon)
-					for _, ortsteilRelation := range processedData.Ortsteile {
-						ortsteilName := ortsteilRelation.Tags.Find("name")
-						var ortsteilLineStrings []orb.LineString
-						for _, member := range ortsteilRelation.Members {
-							if member.Type == "way" {
-								wayID, err := member.ElementID().WayID()
-								if err != nil {
-									log.Err(err).Msg("")
-									continue
-								}
-								way := processedData.Ways[wayID]
-								lineString := geo.LineStringFromWay(way, processedData.Nodes)
-								ortsteilLineStrings = append(ortsteilLineStrings, lineString)
-							}
-						}
-
-						ortsteilRing, err := geo.RingFromLineStrings(ortsteilLineStrings)
-						if err == nil {
-							ortsteilPolygon := orb.Polygon([]orb.Ring{ortsteilRing})
-							ortsteilPolygons[ortsteilName] = ortsteilPolygon
-							seekerInside := planar.PolygonContains(ortsteilPolygon, seekerPoint)
-							hiderInside := planar.PolygonContains(ortsteilPolygon, hiderPoint)
-
-							if seekerInside && hiderInside {
-								sameBezirk = true
-								seekerOrtsteilName = ortsteilName
-							} else if seekerInside && !hiderInside {
-								sameBezirk = false
-								seekerOrtsteilName = ortsteilName
-							} else if !seekerInside && hiderInside {
-								sameBezirk = false
-							}
-						}
-					}
 					fc, err := helpers.FCFromDB(lobby)
 					if err != nil {
-						log.Err(err).Msg("")
+						log.Err(err).Msg("failed to get FC from DB while asking same bezirk question")
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write(nil)
 						return
 					}
 
-					// same bezirk, color all other bezirke
-					if sameBezirk {
-						log.Info().Msg("it's a hit!")
-						for ortsteilName, ortsteilPolygon := range ortsteilPolygons {
-							if ortsteilName != seekerOrtsteilName {
-								fc.Append(geojson.NewFeature(ortsteilPolygon))
-								err = helpers.FCToDB(db, lobby, fc)
+					var zoneCenter orb.Point
+					zoneCenter[1] = lobby.ZoneCenterLat
+					zoneCenter[0] = lobby.ZoneCenterLon
+
+					var seekerPoint orb.Point
+					seekerPoint[1] = lobby.SeekerLat
+					seekerPoint[0] = lobby.SeekerLon
+
+					var hiderPoint orb.Point
+					hiderPoint[1] = lobby.HiderLat
+					hiderPoint[0] = lobby.HiderLon
+
+					multiPolygonMap := make(map[string]orb.MultiPolygon)
+
+					for _, relation := range processedData.Ortsteile {
+						ortsteilName := relation.Tags.Find("name")
+						if ortsteilName == "" {
+							log.Warn().Msg("ortsteil with ID " + fmt.Sprint(relation.ElementID()) + " has empty name field")
+							continue
+						}
+						multiPolygon, err := geo.RelationToMultiPolygon(*relation, processedData.Nodes, processedData.Ways)
+						if err != nil {
+							log.Err(err).Msg("failed converting relation to polygon")
+							continue
+						}
+						multiPolygonMap[ortsteilName] = multiPolygon
+					}
+
+					var seekerOrtsteil string
+					var hiderOrtsteil string
+
+					for ortsteilName, multiPolygon := range multiPolygonMap {
+						if planar.MultiPolygonContains(multiPolygon, seekerPoint) {
+							seekerOrtsteil = ortsteilName
+						}
+						if planar.MultiPolygonContains(multiPolygon, hiderPoint) {
+							hiderOrtsteil = ortsteilName
+						}
+					}
+
+					var description string
+
+					if hiderOrtsteil == seekerOrtsteil {
+						description = "Hider is in " + hiderOrtsteil
+						for ortsteilName, multiPolygon := range multiPolygonMap {
+							if ortsteilName != hiderOrtsteil {
+								fc.Append(geojson.NewFeature(multiPolygon))
+							} else {
+								log.Debug().Msg("not appending ortsteil " + ortsteilName)
 							}
 						}
-						// different bezirk, only color bezirk of seeker
 					} else {
-						log.Info().Msg("it's a hit!")
-						seekerOrtsteil := ortsteilPolygons[seekerOrtsteilName]
-						fc.Append(geojson.NewFeature(seekerOrtsteil))
-						err = helpers.FCToDB(db, lobby, fc)
+						description = "Hider is not in " + hiderOrtsteil
+						for ortsteilName, polygon := range multiPolygonMap {
+							if ortsteilName == seekerOrtsteil {
+								fc.Append(geojson.NewFeature(polygon))
+								log.Debug().Msg("appending ortsteil " + ortsteilName)
+							}
+						}
 					}
-					if err != nil {
-						log.Err(err).Msg("")
+
+					log.Debug().Msg("seeker ortsteil is " + seekerOrtsteil + " and hider ortsteil is " + hiderOrtsteil)
+					historyItem := models.HistoryInDB{
+						LobbyID:     lobby.ID,
+						Title:       "Same Ortsteil",
+						Description: description,
+					}
+					result := db.Create(&historyItem)
+					if result.Error != nil {
+						log.Err(err).Msg("failed creating history item")
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write(nil)
 						return
 					}
+
+					err = helpers.FCToDB(db, lobby, fc)
+					if err != nil {
+						log.Err(err).Msg("failed to save FC to DB while asking same ortsteil question")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
 					w.WriteHeader(http.StatusOK)
 					w.Write(nil)
 				})
@@ -1185,117 +1344,165 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 						return
 					}
 
-					var hiderPoint orb.Point
-					hiderPoint[0] = lobby.HiderLon
-					hiderPoint[1] = lobby.HiderLat
-
-					var seekerPoint orb.Point
-					seekerPoint[0] = lobby.SeekerLon
-					seekerPoint[1] = lobby.SeekerLat
-
-					var seekerOrtsteilName string
-					var hiderOrtsteilName string
-
-					ortsteilPolygons := make(map[string]orb.Polygon)
-					for _, ortsteilRelation := range processedData.Ortsteile {
-						ortsteilName := ortsteilRelation.Tags.Find("name")
-
-						if ortsteilName == "" {
-							log.Warn().Msg("ortsteil with ID " + fmt.Sprint(ortsteilRelation.ElementID()) + " has empty name field")
-							continue
-						}
-						var ortsteilLineStrings []orb.LineString
-						for _, member := range ortsteilRelation.Members {
-							if member.Type == "way" {
-								wayID, err := member.ElementID().WayID()
-								if err != nil {
-									log.Err(err).Msg("")
-									continue
-								}
-								way := processedData.Ways[wayID]
-								if way != nil {
-									lineString := geo.LineStringFromWay(way, processedData.Nodes)
-									ortsteilLineStrings = append(ortsteilLineStrings, lineString)
-								}
-							}
-						}
-
-						ortsteilRing, err := geo.RingFromLineStrings(ortsteilLineStrings)
-						if err == nil {
-							ortsteilPolygon := orb.Polygon([]orb.Ring{ortsteilRing})
-							ortsteilPolygons[ortsteilName] = ortsteilPolygon
-
-							hiderInside := planar.PolygonContains(ortsteilPolygon, hiderPoint)
-							seekerInside := planar.PolygonContains(ortsteilPolygon, seekerPoint)
-
-							if ortsteilName == "Mahlsdorf" {
-								fmt.Println(len(ortsteilLineStrings))
-								log.Info().Msg("FOUNDDD ITTTT: seeker is inside: " + fmt.Sprint(seekerInside))
-								testFC := geojson.NewFeatureCollection()
-								testFC.Append(geojson.NewFeature(ortsteilPolygon))
-								testJson, _ := testFC.MarshalJSON()
-								fmt.Println(string(testJson))
-							}
-
-							if hiderInside {
-								hiderOrtsteilName = ortsteilName
-							}
-							if seekerInside {
-								seekerOrtsteilName = ortsteilName
-							}
-						} else {
-							log.Err(err).Msg("")
-							continue
-						}
-					}
-
-					if seekerOrtsteilName == "" {
-						log.Warn().Msg(fmt.Sprint("seeker ortsteil name is empty with seeker location", seekerPoint))
+					fc, err := helpers.FCFromDB(lobby)
+					if err != nil {
+						log.Err(err).Msg("failed to get FC from DB while asking last bezirk letter question")
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write(nil)
 						return
 					}
-					if hiderOrtsteilName == "" {
-						log.Warn().Msg(fmt.Sprint("hider ortsteil name is empty with seeker location", seekerPoint))
+
+					var zoneCenter orb.Point
+					zoneCenter[1] = lobby.ZoneCenterLat
+					zoneCenter[0] = lobby.ZoneCenterLon
+
+					var seekerPoint orb.Point
+					seekerPoint[1] = lobby.SeekerLat
+					seekerPoint[0] = lobby.SeekerLon
+
+					var hiderPoint orb.Point
+					hiderPoint[1] = lobby.HiderLat
+					hiderPoint[0] = lobby.HiderLon
+
+					multiPolygonMap := make(map[string]orb.MultiPolygon)
+
+					for _, relation := range processedData.Ortsteile {
+						ortsteilName := relation.Tags.Find("name")
+						if ortsteilName == "" {
+							log.Warn().Msg("ortsteil with ID " + fmt.Sprint(relation.ElementID()) + " has empty name field")
+							continue
+						}
+						multiPolygon, err := geo.RelationToMultiPolygon(*relation, processedData.Nodes, processedData.Ways)
+						if err != nil {
+							log.Err(err).Msg("failed converting relation to polygon")
+							continue
+						}
+						multiPolygonMap[ortsteilName] = multiPolygon
+					}
+
+					var seekerOrtsteil string
+					var hiderOrtsteil string
+
+					for ortsteilName, multiPolygon := range multiPolygonMap {
+						if planar.MultiPolygonContains(multiPolygon, seekerPoint) {
+							seekerOrtsteil = ortsteilName
+						}
+						if planar.MultiPolygonContains(multiPolygon, hiderPoint) {
+							hiderOrtsteil = ortsteilName
+						}
+					}
+
+					var description string
+
+					if hiderOrtsteil[len(hiderOrtsteil)-1] == seekerOrtsteil[len(seekerOrtsteil)-1] {
+						description = "Hiders ortsteil ends with " + string(hiderOrtsteil[len(hiderOrtsteil)-1])
+						for ortsteilName, polygon := range multiPolygonMap {
+							if ortsteilName[len(ortsteilName)-1] != hiderOrtsteil[len(hiderOrtsteil)-1] {
+								fc.Append(geojson.NewFeature(polygon))
+							}
+						}
+					} else {
+						description = "Hiders ortsteil doesn't end with " + string(seekerOrtsteil[len(seekerOrtsteil)-1])
+						for ortsteilName, polygon := range multiPolygonMap {
+							if ortsteilName[len(ortsteilName)-1] == seekerOrtsteil[len(seekerOrtsteil)-1] {
+								fc.Append(geojson.NewFeature(polygon))
+							}
+						}
+					}
+
+					historyItem := models.HistoryInDB{
+						LobbyID:     lobby.ID,
+						Title:       "Ortsteil last letter",
+						Description: description,
+					}
+
+					result := db.Create(&historyItem)
+					if result.Error != nil {
+						log.Err(err).Msg("failed creating history item")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
+					log.Debug().Msg("seeker ortsteil is " + seekerOrtsteil + " and hider ortsteil is " + hiderOrtsteil)
+
+					err = helpers.FCToDB(db, lobby, fc)
+					if err != nil {
+						log.Err(err).Msg("failed to save FC to DB while asking same ortsteil question")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
+					w.WriteHeader(http.StatusOK)
+					w.Write(nil)
+				})
+				r.Post("/closerToMcDonalds", func(w http.ResponseWriter, r *http.Request) {
+					lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
+					if !isLobby {
+						fmt.Println(lobby)
+						log.Warn().Msg("couldn't cast lobby value from context")
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write(nil)
 						return
 					}
 
 					fc, err := helpers.FCFromDB(lobby)
+
+					closerOrFurtherFromObject(lobby, fc, processedData, w, db, processedData.McDonaldsNodes, processedData.McDonaldsWays)
 					if err != nil {
-						log.Err(err).Msg("")
+						log.Err(err).Msg("failed to get FC from DB while asking last bezirk letter question")
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write(nil)
 						return
 					}
 
-					seekerOrtsteilLastChar := seekerOrtsteilName[len(seekerOrtsteilName)-1]
-					hiderortsteilLastchar := hiderOrtsteilName[len(hiderOrtsteilName)-1]
-
-					// last char matches
-					if hiderortsteilLastchar == seekerOrtsteilLastChar {
-						for ortsteilName, ortsteilPolygon := range ortsteilPolygons {
-							if ortsteilName[len(ortsteilName)-1] != seekerOrtsteilLastChar {
-								fc.Append(geojson.NewFeature(ortsteilPolygon))
-							}
-						}
-						err = helpers.FCToDB(db, lobby, fc)
-						// last char doesn't match
-					} else {
-						for ortsteilName, ortsteilPolygon := range ortsteilPolygons {
-							if ortsteilName[len(ortsteilName)-1] == seekerOrtsteilLastChar {
-								fc.Append(geojson.NewFeature(ortsteilPolygon))
-							}
-						}
-						err = helpers.FCToDB(db, lobby, fc)
-					}
-					if err != nil {
-						log.Err(err).Msg("")
+					w.WriteHeader(http.StatusOK)
+					w.Write(nil)
+				})
+				r.Post("/closerToIkea", func(w http.ResponseWriter, r *http.Request) {
+					lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
+					if !isLobby {
+						fmt.Println(lobby)
+						log.Warn().Msg("couldn't cast lobby value from context")
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write(nil)
 						return
 					}
+
+					fc, err := helpers.FCFromDB(lobby)
+
+					closerOrFurtherFromObject(lobby, fc, processedData, w, db, map[osm.NodeID]*osm.Node{}, processedData.IkeaWays)
+					if err != nil {
+						log.Err(err).Msg("failed to get FC from DB while asking last bezirk letter question")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
+					w.WriteHeader(http.StatusOK)
+					w.Write(nil)
+				})
+				r.Post("/closerToSpree", func(w http.ResponseWriter, r *http.Request) {
+					lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
+					if !isLobby {
+						fmt.Println(lobby)
+						log.Warn().Msg("couldn't cast lobby value from context")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
+					fc, err := helpers.FCFromDB(lobby)
+
+					closerOrFurtherFromOrbLine(lobby, fc, w, db, processedData.SpreeLineStrings)
+					if err != nil {
+						log.Err(err).Msg("failed to get FC from DB while asking last bezirk letter question")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
 					w.WriteHeader(http.StatusOK)
 					w.Write(nil)
 				})

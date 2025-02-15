@@ -69,7 +69,7 @@ func NewCircle(center orb.Point, radius float64) orb.Ring {
 	}
 	ring = append(ring, wgsFirstRingPoint)
 
-	// ring.Reverse()
+	ring.Reverse()
 	return ring
 }
 func NewInverseCircle(center orb.Point, radius float64) orb.Polygon {

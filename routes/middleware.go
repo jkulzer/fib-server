@@ -2,7 +2,6 @@ package routes
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -76,19 +75,14 @@ func LobbyMiddleware(db *gorm.DB) func(http.Handler) http.Handler {
 			}
 			// finds lobby in DB
 			var lobby models.Lobby
-			result := db.Where("token = ?", lobbyToken).First(&lobby)
+			result := db.Where("token = ?", lobbyToken).First(&lobby).Preload("history_in_dbs")
 			// if lobby can't be found
 			if result.Error != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				w.Write(nil)
 				return
 			}
-			userID, _ := r.Context().Value(models.UserIDKey).(uint)
-			fmt.Println(userID)
 			ctx := context.WithValue(r.Context(), models.LobbyKey, lobby)
-			userID, _ = ctx.Value(models.UserIDKey).(uint)
-			fmt.Println(userID)
-			// found lobby
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

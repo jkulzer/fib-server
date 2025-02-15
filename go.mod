@@ -26,6 +26,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.22 // indirect
 	github.com/paulmach/protoscan v0.2.1 // indirect
 	github.com/stretchr/testify v1.9.0 // indirect
+	github.com/turistikrota/osm v0.0.5 // indirect
 	go.mongodb.org/mongo-driver v1.11.4 // indirect
 	golang.org/x/sys v0.29.0 // indirect
 	golang.org/x/text v0.21.0 // indirect

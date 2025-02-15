@@ -18,6 +18,7 @@ func InitDB() *gorm.DB {
 	db.AutoMigrate(&models.UserAccount{})
 	db.AutoMigrate(&models.Session{})
 	db.AutoMigrate(&models.Lobby{})
+	db.AutoMigrate(&models.HistoryInDB{})
 
 	return db
 }
