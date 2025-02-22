@@ -1,8 +1,6 @@
 package routes
 
 import (
-	"gorm.io/gorm"
-
 	"context"
 	"fmt"
 	"math"
@@ -18,7 +16,6 @@ import (
 	orbGeo "github.com/paulmach/orb/geo"
 	"github.com/paulmach/orb/geojson"
 	"github.com/paulmach/orb/planar"
-	// "github.com/paulmach/orb/project"
 
 	osmLookup "github.com/turistikrota/osm"
 
@@ -27,7 +24,7 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-func closerOrFurtherFromObject(lobby models.Lobby, fc *geojson.FeatureCollection, processedData geo.ProcessedData, w http.ResponseWriter, db *gorm.DB, objectNodes map[osm.NodeID]*osm.Node, objectWays map[osm.WayID]*osm.Way) {
+func closerOrFurtherFromObject(lobby models.Lobby, fc *geojson.FeatureCollection, processedData geo.ProcessedData, w http.ResponseWriter, objectNodes map[osm.NodeID]*osm.Node, objectWays map[osm.WayID]*osm.Way) (returnLobby models.Lobby, closer bool, distance float64, err error) {
 	var seekerPoint orb.Point
 	seekerPoint[1] = lobby.SeekerLat
 	seekerPoint[0] = lobby.SeekerLon
@@ -97,8 +94,15 @@ func closerOrFurtherFromObject(lobby models.Lobby, fc *geojson.FeatureCollection
 		return
 	}
 
-	// closer to the object than the hider
+	var isCloser bool
 	if seekerDistance < hiderDistance {
+		isCloser = true
+	} else {
+		isCloser = false
+	}
+
+	// closer to the object than the hider
+	if isCloser {
 		for _, circle := range circleList {
 			fc.Append(geojson.NewFeature(circle))
 		}
@@ -110,23 +114,25 @@ func closerOrFurtherFromObject(lobby models.Lobby, fc *geojson.FeatureCollection
 			log.Err(err).Msg("failed to get polygol difference")
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write(nil)
-			return
+			return lobby, false, 0.0, err
 
 		}
 		diffMultiPolygon := helpers.P2g(diff)
 		fc.Append(geojson.NewFeature(diffMultiPolygon))
 	}
 
-	err := helpers.FCToDB(db, lobby, fc)
+	lobby, err = helpers.SaveFC(lobby, fc)
 	if err != nil {
 		log.Err(err).Msg("failed to save FC to DB")
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write(nil)
-		return
+		return lobby, false, 0.0, err
 	}
+
+	return lobby, isCloser, seekerDistance, nil
 }
 
-func closerOrFurtherFromOrbLine(lobby models.Lobby, fc *geojson.FeatureCollection, w http.ResponseWriter, db *gorm.DB, lineStrings []orb.LineString) {
+func closerOrFurtherFromOrbLine(lobby models.Lobby, fc *geojson.FeatureCollection, w http.ResponseWriter, lineStrings []orb.LineString) (returnLobby models.Lobby, closer bool, distance float64, err error) {
 	var seekerPoint orb.Point
 	seekerPoint[1] = lobby.SeekerLat
 	seekerPoint[0] = lobby.SeekerLon
@@ -183,19 +189,21 @@ func closerOrFurtherFromOrbLine(lobby models.Lobby, fc *geojson.FeatureCollectio
 		log.Err(err).Msg("failed performing union operation")
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write(nil)
-		return
+		return lobby, false, 0.0, err
 	}
 
 	multiPoly = helpers.P2g(union)
 
-	if planar.MultiPolygonContains(multiPoly, hiderPoint) {
+	isCloser := planar.MultiPolygonContains(multiPoly, hiderPoint)
+
+	if isCloser {
 		outsideGeom := helpers.G2p(orb.Polygon{sharedModels.WideOutsideBound()})
 		diff, err := polygol.Difference(outsideGeom, helpers.G2p(multiPoly))
 		if err != nil {
 			log.Err(err).Msg("failed to get polygol difference")
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write(nil)
-			return
+			return lobby, false, 0.0, err
 
 		}
 		diffMultiPolygon := helpers.P2g(diff)
@@ -204,13 +212,15 @@ func closerOrFurtherFromOrbLine(lobby models.Lobby, fc *geojson.FeatureCollectio
 		fc.Append(geojson.NewFeature(multiPoly))
 	}
 
-	err = helpers.FCToDB(db, lobby, fc)
+	lobby, err = helpers.SaveFC(lobby, fc)
 	if err != nil {
 		log.Err(err).Msg("failed to save FC to DB")
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write(nil)
-		return
+		return lobby, false, 0.0, err
 	}
+
+	return lobby, isCloser, seekerDistance, nil
 }
 
 func getClosestAdressString(point orb.Point) (string, error) {

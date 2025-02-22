@@ -14,6 +14,7 @@ import (
 	"github.com/jkulzer/fib-server/models"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var nullUuidString = "00000000-0000-0000-0000-000000000000"
@@ -75,7 +76,14 @@ func LobbyMiddleware(db *gorm.DB) func(http.Handler) http.Handler {
 			}
 			// finds lobby in DB
 			var lobby models.Lobby
-			result := db.Where("token = ?", lobbyToken).First(&lobby).Preload("history_in_dbs")
+			result := db.Where("token = ?", lobbyToken).First(&lobby)
+			if result.Error != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write(nil)
+				return
+			}
+			result = db.Preload(clause.Associations).Find(&lobby)
+			// result := db.Preload("UserAccount").Where(&models.Session{Token: sessionToken}).First(&session)
 			// if lobby can't be found
 			if result.Error != nil {
 				w.WriteHeader(http.StatusBadRequest)

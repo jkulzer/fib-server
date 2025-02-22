@@ -19,6 +19,11 @@ func InitDB() *gorm.DB {
 	db.AutoMigrate(&models.Session{})
 	db.AutoMigrate(&models.Lobby{})
 	db.AutoMigrate(&models.HistoryInDB{})
+	db.AutoMigrate(&models.CardDraw{})
+	db.AutoMigrate(&models.CurrentDraw{})
+	db.AutoMigrate(&models.Card{})
+
+	db.Session(&gorm.Session{FullSaveAssociations: true})
 
 	return db
 }

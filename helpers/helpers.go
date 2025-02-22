@@ -1,9 +1,12 @@
 package helpers
 
 import (
+	"encoding/json"
+	"fmt"
 	"io"
 	"math"
 	"math/rand"
+	"net/http"
 	"os"
 
 	"gorm.io/gorm"
@@ -11,6 +14,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/jkulzer/fib-server/models"
+	"github.com/jkulzer/fib-server/sharedModels"
 	"github.com/paulmach/orb/geojson"
 )
 
@@ -48,24 +52,32 @@ func FCFromDB(lobby models.Lobby) (*geojson.FeatureCollection, error) {
 }
 
 func FCToDB(db *gorm.DB, lobby models.Lobby, fc *geojson.FeatureCollection) error {
-	areaJson, err := fc.MarshalJSON()
+	lobby, err := SaveFC(lobby, fc)
 	if err != nil {
 		return err
-	}
-	lobby.ExcludedArea = string(areaJson)
-
-	f, err := os.Create("mapdata.geojson")
-	defer f.Close()
-	_, err = f.Write(areaJson)
-	if err != nil {
-		log.Err(err).Msg("")
 	}
 
 	result := db.Save(&lobby)
 	if result.Error != nil {
 		return result.Error
 	}
+	db.Session(&gorm.Session{FullSaveAssociations: true}).Updates(&lobby)
 	return nil
+}
+
+func SaveFC(lobby models.Lobby, fc *geojson.FeatureCollection) (models.Lobby, error) {
+	areaJson, err := fc.MarshalJSON()
+	if err != nil {
+		return lobby, err
+	}
+	lobby.ExcludedArea = string(areaJson)
+	f, err := os.Create("mapdata.geojson")
+	defer f.Close()
+	_, err = f.Write(areaJson)
+	if err != nil {
+		log.Err(err).Msg("")
+	}
+	return lobby, err
 }
 
 // normalizeBearing adjusts the angle to be within the range [-180, 180)
@@ -78,4 +90,35 @@ func NormalizeBearing(angle float64) float64 {
 		angle += 360
 	}
 	return angle
+}
+
+func CreateCardDraw(db *gorm.DB, toDraw uint, toPick uint, lobbyID uint, w http.ResponseWriter) error {
+	log.Debug().Msg("creating card draw")
+	cardDraw := models.CardDraw{
+		LobbyID:     lobbyID,
+		CardsToDraw: toDraw,
+		CardsToPick: toPick,
+	}
+	result := db.Create(&cardDraw)
+	if result.Error != nil {
+		return result.Error
+	}
+	return nil
+}
+func ExternalToInternalCard(externalCard sharedModels.Card) models.Card {
+	return models.Card{
+		Title:              externalCard.Title,
+		Description:        externalCard.Description,
+		Type:               externalCard.Type,
+		ExpirationDuration: externalCard.ExpirationDuration,
+		ActivationTime:     externalCard.ActivationTime,
+		BonusTime:          externalCard.BonusTime,
+	}
+}
+
+func PrintLobby(lobby models.Lobby) {
+	lobbyCopy := lobby
+	lobbyCopy.ExcludedArea = ""
+	test, _ := json.Marshal(lobbyCopy)
+	fmt.Println(string(test))
 }

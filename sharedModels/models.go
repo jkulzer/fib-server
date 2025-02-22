@@ -100,7 +100,6 @@ type HistoryResponse struct {
 
 // var RunDuration time.Duration = 45 * time.Minute
 
-// var RunDuration time.Duration = 1 * time.Minute
 var RunDuration time.Duration = 30 * time.Second
 
 var HidingZoneRadius float64 = 500.0
@@ -111,7 +110,7 @@ type LocationRequest struct {
 
 var leftBound float64 = 12
 var rightBound float64 = 15
-var topBound float64 = 53
+var topBound float64 = 54
 var bottomBound float64 = 51
 
 func LeftTopPoint() orb.Point {
@@ -153,3 +152,14 @@ func WideOutsideBound() orb.Ring {
 }
 
 var ZeroPoint = orb.Point{0, 0}
+
+type CardDraws struct {
+	LobbyID uint
+	Draws   []CardDraw
+}
+
+type CardDraw struct {
+	DrawID      uint
+	CardsToDraw uint
+	CardsToPick uint
+}

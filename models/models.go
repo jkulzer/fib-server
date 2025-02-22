@@ -49,6 +49,12 @@ type Lobby struct {
 	ThermometerStartLat float64
 	ThermometerStartLon float64
 	History             []HistoryInDB `gorm:"foreignKey:LobbyID"`
+	// opportunities to draw cards
+	CardDraws []CardDraw `gorm:"foreignKey:LobbyID"`
+	// drawn cards from which the selection hasn't been made
+	CurrentDraw CurrentDraw `gorm:"foreignKey:LobbyID"`
+	// the card list from which cards get drawn
+	RemainingCards []Card `gorm:"foreignKey:RemainingCardsLobbyID"`
 }
 
 type HistoryInDB struct {
@@ -57,6 +63,32 @@ type HistoryInDB struct {
 	LobbyType   string
 	Title       string
 	Description string
+}
+
+type CurrentDraw struct {
+	gorm.Model
+	LobbyID uint
+	Cards   []Card `gorm:"foreignKey:CurrentDrawID"`
+	ToPick  uint
+}
+
+type Card struct {
+	gorm.Model
+	RemainingCardsLobbyID uint
+	CurrentDrawID         uint
+	Title                 string
+	Description           string
+	Type                  sharedModels.CardType
+	ExpirationDuration    time.Duration
+	ActivationTime        time.Time
+	BonusTime             time.Duration
+}
+
+type CardDraw struct {
+	gorm.Model
+	LobbyID     uint
+	CardsToDraw uint
+	CardsToPick uint
 }
 
 type ContextKey uint

@@ -5,7 +5,10 @@ import (
 
 	"encoding/json"
 	"fmt"
+	"math"
+	"math/rand"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -613,7 +616,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 					return
 				}
 			})
-			r.Get("/history", func(w http.ResponseWriter, r *http.Request) {
+			r.Get("/cardActions", func(w http.ResponseWriter, r *http.Request) {
 				userID, isUint := r.Context().Value(models.UserIDKey).(uint)
 				if !isUint {
 					log.Debug().Msg(fmt.Sprint(userID))
@@ -631,14 +634,180 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 					return
 				}
 
-				fmt.Println(lobby.History)
+				var cardDraws []sharedModels.CardDraw
+				for _, cardDraw := range lobby.CardDraws {
+					cardDraws = append(cardDraws, sharedModels.CardDraw{
+						DrawID:      cardDraw.ID,
+						CardsToDraw: cardDraw.CardsToDraw,
+						CardsToPick: cardDraw.CardsToPick,
+					})
+				}
 
-				marshaledHistory, err := json.Marshal(lobby.History)
+				marshaledResponse, err := json.Marshal(sharedModels.CardDraws{
+					LobbyID: lobby.ID,
+					Draws:   cardDraws,
+				})
 				if err != nil {
 					log.Err(err).Msg("failed marshaling history json")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write(nil)
 				}
+
+				w.WriteHeader(http.StatusOK)
+				w.Write(marshaledResponse)
+			})
+			r.Post("/drawCards/{drawID}", func(w http.ResponseWriter, r *http.Request) {
+				userID, isUint := r.Context().Value(models.UserIDKey).(uint)
+				if !isUint {
+					log.Debug().Msg(fmt.Sprint(userID))
+					log.Warn().Msg("failed to convert userID to uint in role selection")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
+				if !isLobby {
+					fmt.Println(lobby)
+					log.Warn().Msg("couldn't cast lobby value from context")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+				drawIDString := chi.URLParam(r, "drawID")
+
+				drawID, err := strconv.ParseUint(drawIDString, 10, 64)
+				if err != nil {
+					log.Err(err).Msg("failed to parse draw ID in url")
+					w.WriteHeader(http.StatusBadRequest)
+					w.Write(nil)
+				}
+
+				var draw models.CardDraw
+
+				result := db.First(&draw, drawID)
+				if result.Error != nil {
+					log.Err(result.Error).Msg("couldn't find card draws")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+
+				if draw.LobbyID != lobby.ID {
+					log.Warn().Msg("card draw doesn't have matching lobby ID " + fmt.Sprint(draw.LobbyID, lobby.ID))
+					w.WriteHeader(http.StatusNotFound)
+					w.Write(nil)
+					return
+				}
+
+				db.Preload("CurrentDraw").Find(&lobby)
+				db.Preload("CurrentDraw.Cards").Find(&lobby)
+				if len(lobby.CurrentDraw.Cards) != 0 {
+					log.Err(err).Msg("card draw already in progress")
+					w.WriteHeader(http.StatusConflict)
+					w.Write(nil)
+					return
+				}
+
+				for i := uint(1); i <= draw.CardsToDraw; i++ {
+					log.Debug().Msg("getting random card: i=" + fmt.Sprint(i) + " limit is  " + fmt.Sprint(draw.CardsToDraw))
+
+					if len(lobby.RemainingCards) < 1 {
+						cardList := sharedModels.GetCardList()
+						for _, card := range cardList {
+							lobby.RemainingCards = append(lobby.RemainingCards, helpers.ExternalToInternalCard(card))
+						}
+					}
+
+					randomCardIndex := rand.Intn(len(lobby.RemainingCards))
+
+					generatedCard := lobby.RemainingCards[randomCardIndex]
+					lobby.CurrentDraw.Cards = append(lobby.CurrentDraw.Cards, models.Card{
+						Title:              generatedCard.Title,
+						Description:        generatedCard.Description,
+						Type:               generatedCard.Type,
+						ExpirationDuration: generatedCard.ExpirationDuration,
+						ActivationTime:     generatedCard.ActivationTime,
+						BonusTime:          generatedCard.BonusTime,
+					})
+
+					lobby.RemainingCards = slices.Delete(lobby.RemainingCards, randomCardIndex, randomCardIndex)
+				}
+				lobby.CurrentDraw.ToPick = draw.CardsToPick
+
+				result = db.Save(&lobby)
+				if result.Error != nil {
+					log.Err(result.Error).Msg("failed saving lobby")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				w.Write(nil)
+			})
+			r.Get("/draw", func(w http.ResponseWriter, r *http.Request) {
+				userID, isUint := r.Context().Value(models.UserIDKey).(uint)
+				if !isUint {
+					log.Debug().Msg(fmt.Sprint(userID))
+					log.Warn().Msg("failed to convert userID to uint in role selection")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
+				if !isLobby {
+					fmt.Println(lobby)
+					log.Warn().Msg("couldn't cast lobby value from context")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+
+				db.Preload("CurrentDraw").Find(&lobby)
+				db.Preload("CurrentDraw.Cards").Find(&lobby)
+
+				fmt.Println(lobby.CurrentDraw)
+
+				marshaledResponse, err := json.Marshal(lobby.CurrentDraw)
+				if err != nil {
+					log.Err(err).Msg("failed marshaling current draw")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+				}
+				w.WriteHeader(http.StatusOK)
+				w.Write(marshaledResponse)
+			})
+			r.Get("/history", func(w http.ResponseWriter, r *http.Request) {
+				userID, isUint := r.Context().Value(models.UserIDKey).(uint)
+				if !isUint {
+					log.Debug().Msg(fmt.Sprint(userID))
+					log.Warn().Msg("failed to convert userID to uint in role selection")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
+				if !isLobby {
+					fmt.Println(lobby)
+					log.Warn().Msg("couldn't cast lobby value from context")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+				var historyList []sharedModels.HistoryItem
+				for _, dbItem := range lobby.History {
+					historyList = append(historyList, sharedModels.HistoryItem{
+						Title:       dbItem.Title,
+						Description: dbItem.Description,
+					})
+				}
+
+				marshaledHistory, err := json.Marshal(historyList)
+				if err != nil {
+					log.Err(err).Msg("failed marshaling history json")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+				}
+
 				w.WriteHeader(http.StatusOK)
 				w.Write(marshaledHistory)
 			})
@@ -684,7 +853,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 					response := sharedModels.RouteProximityResponse{}
 					for _, route := range closeRoutes {
 						routeItem := sharedModels.RouteDetails{
-							Name:    route.Tags.Find("name"),
+							Name:    route.Tags.Find("ref"),
 							RouteID: route.ID,
 						}
 						response.Routes = append(response.Routes, routeItem)
@@ -836,6 +1005,14 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 						return
 					}
 
+					err = helpers.CreateCardDraw(db, 3, 1, lobby.ID, w)
+					if err != nil {
+						log.Err(result.Error).Msg("failed creating card draw")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
 					err = helpers.FCToDB(db, lobby, fc)
 					if err != nil {
 						log.Err(err).Msg("failed to save fc to db during train service question request")
@@ -890,18 +1067,18 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 					} else {
 						radiusDistance = fmt.Sprint(radius/1000) + "km"
 					}
+					fc, err := helpers.FCFromDB(lobby)
+					if err != nil {
+						log.Err(err).Msg("")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
 
 					if distanceSeekerHider < radius {
 						// it's a hit!
 						log.Debug().Msg("it's a match")
 						inverseCircle := helpers.NewInverseCircle(seekerPoint, radius)
-						fc, err := helpers.FCFromDB(lobby)
-						if err != nil {
-							log.Err(err).Msg("")
-							w.WriteHeader(http.StatusInternalServerError)
-							w.Write(nil)
-							return
-						}
 						inverseCircleFeature := geojson.NewFeature(inverseCircle)
 						fc.Append(inverseCircleFeature)
 						historyItem := models.HistoryInDB{
@@ -916,16 +1093,6 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 							w.Write(nil)
 							return
 						}
-
-						err = helpers.FCToDB(db, lobby, fc)
-						if err != nil {
-							log.Err(err).Msg("")
-							w.WriteHeader(http.StatusInternalServerError)
-							w.Write(nil)
-							return
-						}
-						w.WriteHeader(http.StatusOK)
-						w.Write(nil)
 					} else {
 						// it's a miss!
 						log.Debug().Msg("it's not a match")
@@ -952,17 +1119,22 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 							w.Write(nil)
 							return
 						}
-
-						err = helpers.FCToDB(db, lobby, fc)
-						if err != nil {
-							log.Err(err).Msg("")
-							w.WriteHeader(http.StatusInternalServerError)
-							w.Write(nil)
-							return
-						}
-						w.WriteHeader(http.StatusOK)
-						w.Write(nil)
 					}
+					err = helpers.FCToDB(db, lobby, fc)
+					if err != nil {
+						log.Err(err).Msg("")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+					err = helpers.CreateCardDraw(db, 2, 1, lobby.ID, w)
+					if err != nil {
+						log.Err(err).Msg("failed creating card draw")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
 				})
 				r.Route("/thermometer", func(r chi.Router) {
 					r.Post("/start", func(w http.ResponseWriter, r *http.Request) {
@@ -1117,6 +1289,14 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 							return
 						}
 
+						err = helpers.CreateCardDraw(db, 2, 1, lobby.ID, w)
+						if err != nil {
+							log.Err(result.Error).Msg("failed creating card draw")
+							w.WriteHeader(http.StatusInternalServerError)
+							w.Write(nil)
+							return
+						}
+
 						err = helpers.FCToDB(db, lobby, fc)
 						if err != nil {
 							log.Err(err).Msg("")
@@ -1197,7 +1377,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 							}
 						}
 					} else {
-						description = "Hider is not in " + fmt.Sprint(hiderBezirk)
+						description = "Hider is not in " + fmt.Sprint(seekerBezirk)
 						for bezirkName, polygon := range polygonMap {
 							if bezirkName == seekerBezirk {
 								fc.Append(geojson.NewFeature(polygon))
@@ -1218,6 +1398,14 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 					}
 
 					log.Debug().Msg("seeker bezirk is " + seekerBezirk + " and hider bezirk is " + hiderBezirk)
+
+					err = helpers.CreateCardDraw(db, 3, 1, lobby.ID, w)
+					if err != nil {
+						log.Err(result.Error).Msg("failed creating card draw")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
 
 					err = helpers.FCToDB(db, lobby, fc)
 					if err != nil {
@@ -1318,6 +1506,14 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 					result := db.Create(&historyItem)
 					if result.Error != nil {
 						log.Err(err).Msg("failed creating history item")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
+					err = helpers.CreateCardDraw(db, 3, 1, lobby.ID, w)
+					if err != nil {
+						log.Err(result.Error).Msg("failed creating card draw")
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write(nil)
 						return
@@ -1426,6 +1622,14 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 
 					log.Debug().Msg("seeker ortsteil is " + seekerOrtsteil + " and hider ortsteil is " + hiderOrtsteil)
 
+					err = helpers.CreateCardDraw(db, 3, 1, lobby.ID, w)
+					if err != nil {
+						log.Err(result.Error).Msg("failed creating card draw")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
 					err = helpers.FCToDB(db, lobby, fc)
 					if err != nil {
 						log.Err(err).Msg("failed to save FC to DB while asking same ortsteil question")
@@ -1449,9 +1653,44 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 
 					fc, err := helpers.FCFromDB(lobby)
 
-					closerOrFurtherFromObject(lobby, fc, processedData, w, db, processedData.McDonaldsNodes, processedData.McDonaldsWays)
+					lobby, isCloser, distance, err := closerOrFurtherFromObject(lobby, fc, processedData, w, processedData.McDonaldsNodes, processedData.McDonaldsWays)
 					if err != nil {
 						log.Err(err).Msg("failed to get FC from DB while asking last bezirk letter question")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+					var description string
+					if isCloser {
+						description = "Hider is closer than " + fmt.Sprint(math.Round(distance)) + "m to a McDonald's"
+					} else {
+						description = "Hider is further than " + fmt.Sprint(math.Round(distance)) + "m from a McDonald's"
+					}
+
+					historyItem := models.HistoryInDB{
+						LobbyID:     lobby.ID,
+						Title:       "Closer to McDonald's",
+						Description: description,
+					}
+					result := db.Create(&historyItem)
+					if result.Error != nil {
+						log.Err(err).Msg("failed creating history item")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
+					err = helpers.CreateCardDraw(db, 3, 1, lobby.ID, w)
+					if err != nil {
+						log.Err(result.Error).Msg("failed creating card draw")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
+					result = db.Save(&lobby)
+					if result.Error != nil {
+						log.Err(err).Msg("failed saving lobby")
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write(nil)
 						return
@@ -1471,10 +1710,45 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 					}
 
 					fc, err := helpers.FCFromDB(lobby)
-
-					closerOrFurtherFromObject(lobby, fc, processedData, w, db, map[osm.NodeID]*osm.Node{}, processedData.IkeaWays)
 					if err != nil {
 						log.Err(err).Msg("failed to get FC from DB while asking last bezirk letter question")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
+					lobby, isCloser, distance, err := closerOrFurtherFromObject(lobby, fc, processedData, w, map[osm.NodeID]*osm.Node{}, processedData.IkeaWays)
+					var description string
+					if isCloser {
+						description = "Hider is closer than " + fmt.Sprint(math.Round(distance)) + "m to an IKEA"
+					} else {
+						description = "Hider is further than " + fmt.Sprint(math.Round(distance)) + "m from an IKEA"
+					}
+
+					historyItem := models.HistoryInDB{
+						LobbyID:     lobby.ID,
+						Title:       "Closer to IKEA",
+						Description: description,
+					}
+					result := db.Create(&historyItem)
+					if result.Error != nil {
+						log.Err(err).Msg("failed creating history item")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
+					err = helpers.CreateCardDraw(db, 3, 1, lobby.ID, w)
+					if err != nil {
+						log.Err(result.Error).Msg("failed creating card draw")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
+					result = db.Save(&lobby)
+					if result.Error != nil {
+						log.Err(err).Msg("failed saving lobby")
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write(nil)
 						return
@@ -1494,10 +1768,46 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 					}
 
 					fc, err := helpers.FCFromDB(lobby)
-
-					closerOrFurtherFromOrbLine(lobby, fc, w, db, processedData.SpreeLineStrings)
 					if err != nil {
 						log.Err(err).Msg("failed to get FC from DB while asking last bezirk letter question")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
+					lobby, isCloser, distance, err := closerOrFurtherFromOrbLine(lobby, fc, w, processedData.SpreeLineStrings)
+
+					var description string
+					if isCloser {
+						description = "Hider is closer than " + fmt.Sprint(math.Round(distance)) + "m to the spree"
+					} else {
+						description = "Hider is further than " + fmt.Sprint(math.Round(distance)) + "m from the spree"
+					}
+
+					historyItem := models.HistoryInDB{
+						LobbyID:     lobby.ID,
+						Title:       "Closer to Spree",
+						Description: description,
+					}
+					result := db.Create(&historyItem)
+					if result.Error != nil {
+						log.Err(err).Msg("failed creating history item")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
+					err = helpers.CreateCardDraw(db, 3, 1, lobby.ID, w)
+					if err != nil {
+						log.Err(result.Error).Msg("failed creating card draw")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
+					result = db.Save(&lobby)
+					if result.Error != nil {
+						log.Err(err).Msg("failed saving lobby")
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write(nil)
 						return
