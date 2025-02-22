@@ -10,6 +10,7 @@ type CurrentDraw struct {
 }
 
 type Card struct {
+	IDInDB             uint
 	Title              string
 	Description        string
 	Type               CardType

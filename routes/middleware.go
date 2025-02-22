@@ -76,7 +76,7 @@ func LobbyMiddleware(db *gorm.DB) func(http.Handler) http.Handler {
 			}
 			// finds lobby in DB
 			var lobby models.Lobby
-			result := db.Where("token = ?", lobbyToken).First(&lobby)
+			result := db.Preload("History").Where("token = ?", lobbyToken).First(&lobby)
 			if result.Error != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				w.Write(nil)

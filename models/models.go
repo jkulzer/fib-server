@@ -49,6 +49,7 @@ type Lobby struct {
 	ThermometerStartLat float64
 	ThermometerStartLon float64
 	History             []HistoryInDB `gorm:"foreignKey:LobbyID"`
+	HiderDeck           []Card        `gorm:"foreignKey:HiderDeckLobbyID"`
 	// opportunities to draw cards
 	CardDraws []CardDraw `gorm:"foreignKey:LobbyID"`
 	// drawn cards from which the selection hasn't been made
@@ -74,6 +75,7 @@ type CurrentDraw struct {
 
 type Card struct {
 	gorm.Model
+	HiderDeckLobbyID      uint
 	RemainingCardsLobbyID uint
 	CurrentDrawID         uint
 	Title                 string
@@ -82,6 +84,19 @@ type Card struct {
 	ExpirationDuration    time.Duration
 	ActivationTime        time.Time
 	BonusTime             time.Duration
+}
+
+func (c *Card) DTO() sharedModels.Card {
+	return sharedModels.Card{
+		IDInDB:             c.ID,
+		Title:              c.Title,
+		Description:        c.Description,
+		Type:               c.Type,
+		ExpirationDuration: c.ExpirationDuration,
+		ActivationTime:     c.ActivationTime,
+		BonusTime:          c.BonusTime,
+	}
+
 }
 
 type CardDraw struct {

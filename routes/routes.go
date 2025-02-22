@@ -765,14 +765,159 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				db.Preload("CurrentDraw").Find(&lobby)
 				db.Preload("CurrentDraw.Cards").Find(&lobby)
 
-				fmt.Println(lobby.CurrentDraw)
+				var currentDrawCardList []sharedModels.Card
+				for _, dbCard := range lobby.CurrentDraw.Cards {
+					currentDrawCardList = append(currentDrawCardList, sharedModels.Card{
+						IDInDB:             dbCard.ID,
+						Title:              dbCard.Title,
+						Description:        dbCard.Description,
+						Type:               dbCard.Type,
+						ExpirationDuration: dbCard.ExpirationDuration,
+						ActivationTime:     dbCard.ActivationTime,
+						BonusTime:          dbCard.BonusTime,
+					},
+					)
+				}
 
-				marshaledResponse, err := json.Marshal(lobby.CurrentDraw)
+				dtoCurrentDraw := sharedModels.CurrentDraw{
+					Cards:  currentDrawCardList,
+					ToPick: lobby.CurrentDraw.ToPick,
+				}
+
+				marshaledResponse, err := json.Marshal(dtoCurrentDraw)
 				if err != nil {
 					log.Err(err).Msg("failed marshaling current draw")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write(nil)
 				}
+				w.WriteHeader(http.StatusOK)
+				w.Write(marshaledResponse)
+			})
+			r.Post("/pickFromDraw", func(w http.ResponseWriter, r *http.Request) {
+				userID, isUint := r.Context().Value(models.UserIDKey).(uint)
+				if !isUint {
+					log.Debug().Msg(fmt.Sprint(userID))
+					log.Warn().Msg("failed to convert userID to uint in role selection")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
+				if !isLobby {
+					fmt.Println(lobby)
+					log.Warn().Msg("couldn't cast lobby value from context")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+
+				body, err := helpers.ReadHttpResponse(r.Body)
+				if err != nil {
+					log.Err(err).Msg("failed to read http request of body " + fmt.Sprint(err))
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+
+				var pickedCards sharedModels.CardIDList
+				err = json.Unmarshal(body, &pickedCards)
+				if err != nil {
+					log.Err(err).Msg("failed unmarshaling cards to pick")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+
+				db.Preload("CurrentDraw").Find(&lobby)
+				db.Preload("HiderDeck").Find(&lobby)
+				db.Preload("CurrentDraw.Cards").Find(&lobby)
+
+				if len(pickedCards.CardIDList)+len(lobby.HiderDeck) > sharedModels.MaxHandSize {
+					log.Err(err).Msg("can't pick cards, hand would overflow")
+					w.WriteHeader(http.StatusConflict)
+					w.Write(nil)
+					return
+				}
+				if len(pickedCards.CardIDList) <= 0 {
+					w.WriteHeader(http.StatusOK)
+					w.Write(nil)
+					return
+				}
+
+				var cards []models.Card
+				result := db.Find(&cards, pickedCards.CardIDList)
+				if result.Error != nil {
+					log.Err(err).Msg("failed getting list of cards to put in hider hand in db")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+
+				if len(cards) != len(pickedCards.CardIDList) {
+					log.Warn().Msg("list of card IDs to pick and list of found cards in the DB has different lengths")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+
+				for _, card := range cards {
+					lobby.HiderDeck = append(lobby.HiderDeck, card)
+				}
+
+				// deletes the current draw
+				result = db.Delete(&lobby.CurrentDraw)
+				if result.Error != nil {
+					log.Err(err).Msg("failed deleting current draw")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+
+				result = db.Save(&lobby)
+				if result.Error != nil {
+					log.Err(err).Msg("failed saving lobby")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+
+				w.WriteHeader(http.StatusOK)
+				w.Write(nil)
+			})
+			r.Get("/hiderHand", func(w http.ResponseWriter, r *http.Request) {
+				userID, isUint := r.Context().Value(models.UserIDKey).(uint)
+				if !isUint {
+					log.Debug().Msg(fmt.Sprint(userID))
+					log.Warn().Msg("failed to convert userID to uint in role selection")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
+				if !isLobby {
+					fmt.Println(lobby)
+					log.Warn().Msg("couldn't cast lobby value from context")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+
+				db.Preload("CurrentDraw").Find(&lobby)
+				db.Preload("CurrentDraw.Cards").Find(&lobby)
+
+				var hiderDeckCardList []sharedModels.Card
+				for _, dbCard := range lobby.HiderDeck {
+					hiderDeckCardList = append(hiderDeckCardList, dbCard.DTO())
+				}
+
+				marshaledResponse, err := json.Marshal(sharedModels.CardList{List: hiderDeckCardList})
+				if err != nil {
+					log.Err(err).Msg("failed marshaling current draw")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+
 				w.WriteHeader(http.StatusOK)
 				w.Write(marshaledResponse)
 			})

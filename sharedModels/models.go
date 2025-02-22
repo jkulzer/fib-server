@@ -163,3 +163,13 @@ type CardDraw struct {
 	CardsToDraw uint
 	CardsToPick uint
 }
+
+var MaxHandSize int = 6
+
+type CardIDList struct {
+	CardIDList []uint
+}
+
+type CardList struct {
+	List []Card
+}
