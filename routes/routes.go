@@ -741,6 +741,15 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 					w.Write(nil)
 					return
 				}
+
+				result = db.Delete(&draw)
+				if result.Error != nil {
+					log.Err(result.Error).Msg("failed deleting draw after drawing cards")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+
 				w.WriteHeader(http.StatusOK)
 				w.Write(nil)
 			})
@@ -920,6 +929,155 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 
 				w.WriteHeader(http.StatusOK)
 				w.Write(marshaledResponse)
+			})
+			r.Post("/discardCard/{cardID}", func(w http.ResponseWriter, r *http.Request) {
+				userID, isUint := r.Context().Value(models.UserIDKey).(uint)
+				if !isUint {
+					log.Debug().Msg(fmt.Sprint(userID))
+					log.Warn().Msg("failed to convert userID to uint in role selection")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
+				if !isLobby {
+					fmt.Println(lobby)
+					log.Warn().Msg("couldn't cast lobby value from context")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+				cardIDString := chi.URLParam(r, "cardID")
+				cardID, err := strconv.ParseUint(cardIDString, 10, 64)
+				if err != nil {
+					log.Err(err).Msg("failed parsing card id")
+					w.WriteHeader(http.StatusBadRequest)
+					w.Write(nil)
+					return
+				}
+
+				result := db.Delete(&models.Card{}, cardID)
+				if result.Error != nil {
+					log.Err(result.Error).Msg("failed discarding card")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+
+				result = db.Save(&lobby)
+				if result.Error != nil {
+					log.Err(result.Error).Msg("failed saving lobby")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+
+				w.WriteHeader(http.StatusOK)
+				w.Write(nil)
+			})
+			r.Post("/playCard/{cardID}", func(w http.ResponseWriter, r *http.Request) {
+				userID, isUint := r.Context().Value(models.UserIDKey).(uint)
+				if !isUint {
+					log.Debug().Msg(fmt.Sprint(userID))
+					log.Warn().Msg("failed to convert userID to uint in role selection")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
+				if !isLobby {
+					fmt.Println(lobby)
+					log.Warn().Msg("couldn't cast lobby value from context")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+				cardIDString := chi.URLParam(r, "cardID")
+				cardID, err := strconv.ParseUint(cardIDString, 10, 64)
+				if err != nil {
+					log.Err(err).Msg("failed parsing card id")
+					w.WriteHeader(http.StatusBadRequest)
+					w.Write(nil)
+					return
+				}
+
+				var cardToPlay models.Card
+
+				result := db.Find(&cardToPlay, cardID)
+				if result.Error != nil {
+					log.Err(result.Error).Msg("failed to find card to play in DB")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+
+				cardToPlay.HiderDeckLobbyID = 0
+
+				switch cardToPlay.Type {
+				case sharedModels.CurseCard:
+					cardToPlay.ActivationTime = time.Now()
+					lobby.PlayedCurseList = append(lobby.PlayedCurseList, cardToPlay)
+				case sharedModels.TimebonusCard:
+					log.Err(result.Error).Msg("can't play a timebonus card")
+					w.WriteHeader(http.StatusBadRequest)
+					w.Write(nil)
+					return
+					// case sharedModels.Discard1Draw2Card:
+					// case sharedModels.Discard2Draw3Card:
+				}
+
+				result = db.Delete(&cardToPlay)
+				if result.Error != nil {
+					log.Err(result.Error).Msg("failed saving card")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+
+				result = db.Save(&lobby)
+				if result.Error != nil {
+					log.Err(result.Error).Msg("failed saving lobby")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+
+				w.WriteHeader(http.StatusOK)
+				w.Write(nil)
+			})
+			r.Get("/curses", func(w http.ResponseWriter, r *http.Request) {
+				userID, isUint := r.Context().Value(models.UserIDKey).(uint)
+				if !isUint {
+					log.Debug().Msg(fmt.Sprint(userID))
+					log.Warn().Msg("failed to convert userID to uint in role selection")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
+				if !isLobby {
+					fmt.Println(lobby)
+					log.Warn().Msg("couldn't cast lobby value from context")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+
+				var curseCardDTOList []sharedModels.Card
+				for _, curseCard := range lobby.PlayedCurseList {
+					curseCardDTOList = append(curseCardDTOList, curseCard.DTO())
+				}
+
+				marshaledCurses, err := json.Marshal(sharedModels.CardList{List: curseCardDTOList})
+				if err != nil {
+					log.Err(err).Msg("couldn't marshal curse list")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write(nil)
+					return
+				}
+
+				w.WriteHeader(http.StatusOK)
+				w.Write(marshaledCurses)
 			})
 			r.Get("/history", func(w http.ResponseWriter, r *http.Request) {
 				userID, isUint := r.Context().Value(models.UserIDKey).(uint)
@@ -1204,9 +1362,9 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 						w.Write(nil)
 						return
 					}
+					log.Debug().Msg("got seeker address")
 
 					var radiusDistance string
-
 					if radius < 1000 {
 						radiusDistance = fmt.Sprint(radius) + "m"
 					} else {
@@ -1224,6 +1382,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 						// it's a hit!
 						log.Debug().Msg("it's a match")
 						inverseCircle := helpers.NewInverseCircle(seekerPoint, radius)
+						log.Debug().Msg("creating circle with radius " + fmt.Sprint(radius))
 						inverseCircleFeature := geojson.NewFeature(inverseCircle)
 						fc.Append(inverseCircleFeature)
 						historyItem := models.HistoryInDB{
@@ -1242,21 +1401,16 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 						// it's a miss!
 						log.Debug().Msg("it's not a match")
 						circle := helpers.NewCircle(seekerPoint, radius)
+						log.Debug().Msg("creating circle with radius " + fmt.Sprint(radius))
+						log.Debug().Msg("circle: " + fmt.Sprint(circle))
 						circleFeature := geojson.NewFeature(circle)
-						fc, err := helpers.FCFromDB(lobby)
-						fc.Append(circleFeature)
-						if err != nil {
-							log.Err(err).Msg("")
-							w.WriteHeader(http.StatusInternalServerError)
-							w.Write(nil)
-							return
-						}
-
+						fc = fc.Append(circleFeature)
 						historyItem := models.HistoryInDB{
 							LobbyID:     lobby.ID,
 							Title:       "Radar",
 							Description: "Hider is not within " + radiusDistance + " of " + seekerAddr,
 						}
+
 						result := db.Create(&historyItem)
 						if result.Error != nil {
 							log.Err(err).Msg("failed creating history item")
@@ -1272,6 +1426,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 						w.Write(nil)
 						return
 					}
+
 					err = helpers.CreateCardDraw(db, 2, 1, lobby.ID, w)
 					if err != nil {
 						log.Err(err).Msg("failed creating card draw")
@@ -1279,7 +1434,8 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 						w.Write(nil)
 						return
 					}
-
+					w.WriteHeader(http.StatusOK)
+					w.Write(nil)
 				})
 				r.Route("/thermometer", func(r chi.Router) {
 					r.Post("/start", func(w http.ResponseWriter, r *http.Request) {

@@ -5,3 +5,6 @@ format:
 
 execute: 
 	go run .
+
+build:
+	go build .
