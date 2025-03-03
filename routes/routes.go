@@ -319,12 +319,25 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 					w.WriteHeader(http.StatusBadRequest)
 					w.Write(nil)
 				}
+
+				var zoneCenter orb.Point
+				zoneCenter[1] = lobby.ZoneCenterLat
+				zoneCenter[0] = lobby.ZoneCenterLon
+
 				switch userID {
 				case lobby.SeekerID:
 					// yes, longitude comes first, look at https://pkg.go.dev/github.com/paulmach/orb#Point
 					lobby.SeekerLat = locationRequest.Location[1]
 					lobby.SeekerLon = locationRequest.Location[0]
 				case lobby.HiderID:
+					if lobby.Phase == sharedModels.PhaseLocationNarrowing || lobby.Phase == sharedModels.PhaseEndgame {
+						if orbGeo.DistanceHaversine(locationRequest.Location, zoneCenter) > sharedModels.HidingZoneRadius {
+
+							w.WriteHeader(http.StatusConflict)
+							w.Write(nil)
+							return
+						}
+					}
 					// yes, longitude comes first, look at https://pkg.go.dev/github.com/paulmach/orb#Point
 					lobby.HiderLat = locationRequest.Location[1]
 					lobby.HiderLon = locationRequest.Location[0]
@@ -1789,7 +1802,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 							}
 						}
 					} else {
-						description = "Hider is not in " + hiderOrtsteil
+						description = "Hider is not in " + seekerOrtsteil
 						for ortsteilName, polygon := range multiPolygonMap {
 							if ortsteilName == seekerOrtsteil {
 								fc.Append(geojson.NewFeature(polygon))
@@ -2104,6 +2117,92 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write(nil)
 						return
+					}
+
+					result = db.Save(&lobby)
+					if result.Error != nil {
+						log.Err(err).Msg("failed saving lobby")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
+					w.WriteHeader(http.StatusOK)
+					w.Write(nil)
+				})
+				r.Post("/isInHidingZone", func(w http.ResponseWriter, r *http.Request) {
+					lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
+					if !isLobby {
+						fmt.Println(lobby)
+						log.Warn().Msg("couldn't cast lobby value from context")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
+					fc, err := helpers.FCFromDB(lobby)
+					if err != nil {
+						log.Err(err).Msg("failed to get FC from DB while asking last bezirk letter question")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
+					var zoneCenterPoint orb.Point
+					zoneCenterPoint[0] = lobby.ZoneCenterLon
+					zoneCenterPoint[1] = lobby.ZoneCenterLat
+					var seekerPoint orb.Point
+					seekerPoint[0] = lobby.SeekerLon
+					seekerPoint[1] = lobby.SeekerLat
+
+					var isInHidingZone bool
+					if orbGeo.DistanceHaversine(zoneCenterPoint, seekerPoint) <= sharedModels.HidingZoneRadius {
+						isInHidingZone = true
+					} else {
+						isInHidingZone = false
+					}
+
+					seekerAddr, err := getClosestAdressString(seekerPoint)
+					if err != nil {
+						log.Err(err).Msg("failed getting seeker address")
+						w.WriteHeader(http.StatusBadRequest)
+						w.Write(nil)
+						return
+					}
+
+					var description string
+					if isInHidingZone {
+						description = seekerAddr + " is in hiding zone"
+						inverseCircle := helpers.NewInverseCircle(seekerPoint, sharedModels.HidingZoneRadius*2)
+						inverseCircleFeature := geojson.NewFeature(inverseCircle)
+						fc.Append(inverseCircleFeature)
+						lobby.Phase = sharedModels.PhaseEndgame
+					}
+
+					historyItem := models.HistoryInDB{
+						LobbyID:     lobby.ID,
+						Title:       "Is in hiding zone",
+						Description: description,
+					}
+					result := db.Create(&historyItem)
+					if result.Error != nil {
+						log.Err(err).Msg("failed creating history item")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
+					err = helpers.CreateCardDraw(db, 1, 1, lobby.ID, w)
+					if err != nil {
+						log.Err(result.Error).Msg("failed creating card draw")
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write(nil)
+						return
+					}
+
+					lobby, err = helpers.SaveFC(lobby, fc)
+					if err != nil {
+						log.Err(err).Msg("failed to save fc to lobby struct")
 					}
 
 					result = db.Save(&lobby)
