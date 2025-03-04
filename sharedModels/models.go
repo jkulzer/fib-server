@@ -173,3 +173,8 @@ type CardIDList struct {
 type CardList struct {
 	List []Card
 }
+
+type JoinResponse struct {
+	// no role means that the role has to be selected
+	CurrentRole UserRole
+}

@@ -202,6 +202,14 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 		},
 		)
 		r.Post("/join", func(w http.ResponseWriter, r *http.Request) {
+			userID, isUint := r.Context().Value(models.UserIDKey).(uint)
+			if isUint == false {
+				log.Warn().Msg("failed to convert userID to uint in role selection")
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write(nil)
+				return
+			}
+
 			body, err := helpers.ReadHttpResponse(r.Body)
 			if err != nil {
 				log.Err(err).Msg("failed to read http response")
@@ -211,21 +219,38 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 			err = json.Unmarshal(body, &lobbyJoinRequest)
 			if err != nil {
 				log.Warn().Msg("failed to parse json of lobby join request")
-			} else {
-
-				lobby := models.Lobby{
-					Token: lobbyJoinRequest.LobbyToken,
-				}
-
-				result := db.First(&lobby)
-				if result.Error != nil {
-					w.WriteHeader(http.StatusNotFound)
-					w.Write(nil)
-				} else {
-					w.WriteHeader(http.StatusOK)
-					w.Write(nil)
-				}
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write(nil)
 			}
+
+			lobby := models.Lobby{
+				Token: lobbyJoinRequest.LobbyToken,
+			}
+
+			result := db.First(&lobby)
+			if result.Error != nil {
+				w.WriteHeader(http.StatusNotFound)
+				w.Write(nil)
+				return
+			}
+
+			var lobbyJoinResponse sharedModels.JoinResponse
+
+			if lobby.SeekerID == userID {
+				lobbyJoinResponse.CurrentRole = sharedModels.Seeker
+			} else if lobby.HiderID == userID {
+				lobbyJoinResponse.CurrentRole = sharedModels.Hider
+			} else {
+				lobbyJoinResponse.CurrentRole = sharedModels.NoRole
+			}
+			marshaledResponse, err := json.Marshal(lobbyJoinResponse)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write(nil)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			w.Write(marshaledResponse)
 		},
 		)
 		r.Route("/{index}", func(r chi.Router) {
@@ -515,7 +540,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 
 				marshalledJson, err := json.Marshal(startTime)
 				if err != nil {
-					log.Err(err).Msg("failed to marshal roles get")
+					log.Err(err).Msg("failed to marshal run start time")
 				}
 				w.WriteHeader(http.StatusOK)
 				w.Write(marshalledJson)
