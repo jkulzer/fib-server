@@ -20,7 +20,6 @@ func IsExpired(s models.Session) bool {
 
 func NewSession(db *gorm.DB, userAccount models.UserAccount) (uuid.UUID, time.Duration) {
 	sessionToken := uuid.New()
-	// 5 min expiry time
 	expiryDuration := 12 * time.Hour
 	expiresAt := time.Now().Add(expiryDuration)
 

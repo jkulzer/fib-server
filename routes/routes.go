@@ -80,36 +80,40 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 		err = json.Unmarshal(body, &loginInfo)
 		if err != nil {
 			log.Warn().Msg("failed to parse json of login info")
-		} else {
-
-			var userAccount models.UserAccount
-			result := db.Where(&models.UserAccount{Name: loginInfo.Username}).First(&userAccount)
-
-			if result.Error != nil {
-				fmt.Println("Username not found")
-			} else {
-
-				// checks if password is correct
-				if controllers.CheckPasswordHash(
-					loginInfo.Password, userAccount.Password,
-				) {
-					token, expiry := controllers.NewSession(db, userAccount)
-					jsonResponse, err := json.Marshal(sharedModels.SessionToken{
-						Token:  token,
-						Expiry: time.Now().Add(expiry),
-					})
-					if err != nil {
-						log.Warn().Msg("failed to marshal response for sending session token")
-					}
-					w.WriteHeader(http.StatusCreated)
-					w.Write(jsonResponse)
-				} else {
-					w.WriteHeader(http.StatusForbidden)
-					w.Write(nil)
-				}
-			}
-
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write(nil)
+			return
 		}
+
+		var userAccount models.UserAccount
+		result := db.Where(&models.UserAccount{Name: loginInfo.Username}).First(&userAccount)
+
+		if result.Error != nil {
+			fmt.Println("Username not found")
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write(nil)
+			return
+		}
+
+		// checks if password is correct
+		if !controllers.CheckPasswordHash(
+			loginInfo.Password, userAccount.Password,
+		) {
+			w.WriteHeader(http.StatusForbidden)
+			w.Write(nil)
+			return
+		}
+		token, expiry := controllers.NewSession(db, userAccount)
+		jsonResponse, err := json.Marshal(sharedModels.SessionToken{
+			Token:  token,
+			Expiry: time.Now().Add(expiry),
+		})
+		if err != nil {
+			log.Warn().Msg("failed to marshal response for sending session token")
+		}
+		w.WriteHeader(http.StatusCreated)
+		w.Write(jsonResponse)
+		return
 	})
 	r.Route("/lobby", func(r chi.Router) {
 		r.Use(AuthMiddleware(db))
@@ -223,24 +227,26 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				w.Write(nil)
 			}
 
-			lobby := models.Lobby{
-				Token: lobbyJoinRequest.LobbyToken,
-			}
-
-			result := db.First(&lobby)
+			var lobby models.Lobby
+			result := db.Preload("History").Where("token = ?", lobbyJoinRequest.LobbyToken).First(&lobby)
 			if result.Error != nil {
-				w.WriteHeader(http.StatusNotFound)
+				w.WriteHeader(http.StatusBadRequest)
 				w.Write(nil)
 				return
 			}
 
+			log.Debug().Msg("found lobby with token " + fmt.Sprint(lobby.Token) + " with requested token " + fmt.Sprint(lobbyJoinRequest.LobbyToken))
+
 			var lobbyJoinResponse sharedModels.JoinResponse
 
 			if lobby.SeekerID == userID {
+				log.Debug().Msg("seeker id in lobby is " + fmt.Sprint(userID))
 				lobbyJoinResponse.CurrentRole = sharedModels.Seeker
 			} else if lobby.HiderID == userID {
+				log.Debug().Msg("hider id in lobby is " + fmt.Sprint(userID))
 				lobbyJoinResponse.CurrentRole = sharedModels.Hider
 			} else {
+				log.Debug().Msg("found no role associated with user")
 				lobbyJoinResponse.CurrentRole = sharedModels.NoRole
 			}
 			marshaledResponse, err := json.Marshal(lobbyJoinResponse)
