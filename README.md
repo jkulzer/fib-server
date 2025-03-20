@@ -29,3 +29,9 @@ go build
 ```
 
 Daraufhin befindet sich die Binary im Pfad `./fib-server` und kann ausgeführt werden.
+
+Vor der Ausführung müssen noch mit dem folgenden Befehl notwendige Geodaten heruntergeladen werden:
+
+```bash
+wget https://download.geofabrik.de/europe/germany/berlin-latest.osm.pbf
+```
