@@ -89,7 +89,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 		result := db.Where(&models.UserAccount{Name: loginInfo.Username}).First(&userAccount)
 
 		if result.Error != nil {
-			fmt.Println("Username not found")
+			log.Info().Msg("Username not found")
 			w.WriteHeader(http.StatusBadRequest)
 			w.Write(nil)
 			return
@@ -189,7 +189,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 
 				helpers.FCToDB(db, lobby, newFC)
 
-				fmt.Println("Created lobby with token " + lobbyToken)
+				log.Info().Msg("Created lobby with token " + lobbyToken)
 				marshalledJson, err := json.Marshal(lobbyCreationResponse)
 				if err != nil {
 					log.Err(err).Msg("failed to marshal lobby creation response")
@@ -264,7 +264,6 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 			r.Get("/map", func(w http.ResponseWriter, r *http.Request) {
 				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 				if !isLobby {
-					fmt.Println(lobby)
 					log.Warn().Msg("couldn't cast lobby value from context")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write(nil)
@@ -276,7 +275,6 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 			r.Get("/phase", func(w http.ResponseWriter, r *http.Request) {
 				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 				if !isLobby {
-					fmt.Println(lobby)
 					log.Warn().Msg("couldn't cast lobby value from context")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write(nil)
@@ -300,7 +298,6 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 			r.Get("/readiness", func(w http.ResponseWriter, r *http.Request) {
 				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 				if !isLobby {
-					fmt.Println(lobby)
 					log.Warn().Msg("couldn't cast lobby value from context")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write(nil)
@@ -324,7 +321,6 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 			r.Put("/saveLocation", func(w http.ResponseWriter, r *http.Request) {
 				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 				if !isLobby {
-					fmt.Println(lobby)
 					log.Warn().Msg("couldn't cast lobby value from context")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write(nil)
@@ -392,7 +388,6 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 			r.Put("/saveHidingZone", func(w http.ResponseWriter, r *http.Request) {
 				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 				if !isLobby {
-					fmt.Println(lobby)
 					log.Warn().Msg("couldn't cast lobby value from context")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write(nil)
@@ -455,7 +450,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 			r.Put("/readiness", func(w http.ResponseWriter, r *http.Request) {
 				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 				if !isLobby {
-					fmt.Println(lobby)
+					log.Debug().Msg(fmt.Sprint(lobby))
 					log.Warn().Msg("couldn't cast lobby value from context")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write(nil)
@@ -534,7 +529,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 			r.Get("/runStartTime", func(w http.ResponseWriter, r *http.Request) {
 				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 				if !isLobby {
-					fmt.Println(lobby)
+					log.Debug().Msg(fmt.Sprint(lobby))
 					log.Warn().Msg("couldn't cast lobby value from context")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write(nil)
@@ -554,7 +549,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 			r.Get("/roles", func(w http.ResponseWriter, r *http.Request) {
 				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 				if !isLobby {
-					fmt.Println(lobby)
+					log.Debug().Msg(fmt.Sprint(lobby))
 					log.Warn().Msg("couldn't cast lobby value from context")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write(nil)
@@ -593,7 +588,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				}
 				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 				if !isLobby {
-					fmt.Println(lobby)
+					log.Debug().Msg(fmt.Sprint(lobby))
 					log.Warn().Msg("couldn't cast lobby value from context")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write(nil)
@@ -671,7 +666,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				}
 				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 				if !isLobby {
-					fmt.Println(lobby)
+					log.Debug().Msg(fmt.Sprint(lobby))
 					log.Warn().Msg("couldn't cast lobby value from context")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write(nil)
@@ -711,7 +706,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				}
 				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 				if !isLobby {
-					fmt.Println(lobby)
+					log.Debug().Msg(fmt.Sprint(lobby))
 					log.Warn().Msg("couldn't cast lobby value from context")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write(nil)
@@ -808,7 +803,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				}
 				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 				if !isLobby {
-					fmt.Println(lobby)
+					log.Debug().Msg(fmt.Sprint(lobby))
 					log.Warn().Msg("couldn't cast lobby value from context")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write(nil)
@@ -857,7 +852,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				}
 				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 				if !isLobby {
-					fmt.Println(lobby)
+					log.Debug().Msg(fmt.Sprint(lobby))
 					log.Warn().Msg("couldn't cast lobby value from context")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write(nil)
@@ -948,7 +943,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				}
 				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 				if !isLobby {
-					fmt.Println(lobby)
+					log.Debug().Msg(fmt.Sprint(lobby))
 					log.Warn().Msg("couldn't cast lobby value from context")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write(nil)
@@ -985,7 +980,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				}
 				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 				if !isLobby {
-					fmt.Println(lobby)
+					log.Debug().Msg(fmt.Sprint(lobby))
 					log.Warn().Msg("couldn't cast lobby value from context")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write(nil)
@@ -1030,7 +1025,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				}
 				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 				if !isLobby {
-					fmt.Println(lobby)
+					log.Debug().Msg(fmt.Sprint(lobby))
 					log.Warn().Msg("couldn't cast lobby value from context")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write(nil)
@@ -1100,7 +1095,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				}
 				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 				if !isLobby {
-					fmt.Println(lobby)
+					log.Debug().Msg(fmt.Sprint(lobby))
 					log.Warn().Msg("couldn't cast lobby value from context")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write(nil)
@@ -1134,7 +1129,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				}
 				lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 				if !isLobby {
-					fmt.Println(lobby)
+					log.Debug().Msg(fmt.Sprint(lobby))
 					log.Warn().Msg("couldn't cast lobby value from context")
 					w.WriteHeader(http.StatusInternalServerError)
 					w.Write(nil)
@@ -1163,7 +1158,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				r.Get("/closeRoutes", func(w http.ResponseWriter, r *http.Request) {
 					lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 					if !isLobby {
-						fmt.Println(lobby)
+						log.Debug().Msg(fmt.Sprint(lobby))
 						log.Warn().Msg("couldn't cast lobby value from context")
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write(nil)
@@ -1220,7 +1215,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				r.Post("/trainService", func(w http.ResponseWriter, r *http.Request) {
 					lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 					if !isLobby {
-						fmt.Println(lobby)
+						log.Debug().Msg(fmt.Sprint(lobby))
 						log.Warn().Msg("couldn't cast lobby value from context")
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write(nil)
@@ -1374,7 +1369,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				r.Post("/radar/{radius}", func(w http.ResponseWriter, r *http.Request) {
 					lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 					if !isLobby {
-						fmt.Println(lobby)
+						log.Debug().Msg(fmt.Sprint(lobby))
 						log.Warn().Msg("couldn't cast lobby value from context")
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write(nil)
@@ -1485,7 +1480,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 					r.Post("/start", func(w http.ResponseWriter, r *http.Request) {
 						lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 						if !isLobby {
-							fmt.Println(lobby)
+							log.Debug().Msg(fmt.Sprint(lobby))
 							log.Warn().Msg("couldn't cast lobby value from context")
 							w.WriteHeader(http.StatusInternalServerError)
 							w.Write(nil)
@@ -1529,7 +1524,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 					r.Post("/end", func(w http.ResponseWriter, r *http.Request) {
 						lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 						if !isLobby {
-							fmt.Println(lobby)
+							log.Debug().Msg(fmt.Sprint(lobby))
 							log.Warn().Msg("couldn't cast lobby value from context")
 							w.WriteHeader(http.StatusInternalServerError)
 							w.Write(nil)
@@ -1657,7 +1652,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				r.Post("/sameBezirk", func(w http.ResponseWriter, r *http.Request) {
 					lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 					if !isLobby {
-						fmt.Println(lobby)
+						log.Debug().Msg(fmt.Sprint(lobby))
 						log.Warn().Msg("couldn't cast lobby value from context")
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write(nil)
@@ -1766,7 +1761,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				r.Post("/sameOrtsteil", func(w http.ResponseWriter, r *http.Request) {
 					lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 					if !isLobby {
-						fmt.Println(lobby)
+						log.Debug().Msg(fmt.Sprint(lobby))
 						log.Warn().Msg("couldn't cast lobby value from context")
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write(nil)
@@ -1878,7 +1873,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				r.Post("/ortsteilLastLetter", func(w http.ResponseWriter, r *http.Request) {
 					lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 					if !isLobby {
-						fmt.Println(lobby)
+						log.Debug().Msg(fmt.Sprint(lobby))
 						log.Warn().Msg("couldn't cast lobby value from context")
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write(nil)
@@ -1989,7 +1984,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				r.Post("/closerToMcDonalds", func(w http.ResponseWriter, r *http.Request) {
 					lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 					if !isLobby {
-						fmt.Println(lobby)
+						log.Debug().Msg(fmt.Sprint(lobby))
 						log.Warn().Msg("couldn't cast lobby value from context")
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write(nil)
@@ -2047,7 +2042,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				r.Post("/closerToIkea", func(w http.ResponseWriter, r *http.Request) {
 					lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 					if !isLobby {
-						fmt.Println(lobby)
+						log.Debug().Msg(fmt.Sprint(lobby))
 						log.Warn().Msg("couldn't cast lobby value from context")
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write(nil)
@@ -2105,7 +2100,7 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				r.Post("/closerToSpree", func(w http.ResponseWriter, r *http.Request) {
 					lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 					if !isLobby {
-						fmt.Println(lobby)
+						log.Debug().Msg(fmt.Sprint(lobby))
 						log.Warn().Msg("couldn't cast lobby value from context")
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write(nil)
@@ -2164,7 +2159,6 @@ func Router(r chi.Router, db *gorm.DB, processedData geo.ProcessedData) {
 				r.Post("/isInHidingZone", func(w http.ResponseWriter, r *http.Request) {
 					lobby, isLobby := r.Context().Value(models.LobbyKey).(models.Lobby)
 					if !isLobby {
-						fmt.Println(lobby)
 						log.Warn().Msg("couldn't cast lobby value from context")
 						w.WriteHeader(http.StatusInternalServerError)
 						w.Write(nil)

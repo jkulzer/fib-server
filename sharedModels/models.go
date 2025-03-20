@@ -98,9 +98,7 @@ type HistoryResponse struct {
 	History History
 }
 
-// var RunDuration time.Duration = 45 * time.Minute
-
-var RunDuration time.Duration = 30 * time.Second
+var RunDuration time.Duration = 45 * time.Minute
 
 var HidingZoneRadius float64 = 500.0
 
